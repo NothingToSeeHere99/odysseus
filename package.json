@@ -1,8 +1,9 @@
 {
-  "devDependencies": {
-    "@antithesishq/bombadil": "^0.3.2"
-  },
-  "dependencies": {
-    "@anthropic-ai/sdk": "^0.98.0"
+  "name": "pack-rush",
+  "private": true,
+  "description": "Pokémon TCG pack opening game with a rotating shop.",
+  "scripts": {
+    "start": "npx --yes http-server -c-1 -p 8080 .",
+    "test": "node --test tests/*.test.js"
   }
 }
