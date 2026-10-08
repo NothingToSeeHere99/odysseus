@@ -981,6 +981,17 @@
     const sxKey = input(s.scrydexKey, { type: 'password', placeholder: 'Scrydex API key' });
     const sxTeam = input(s.scrydexTeam, { placeholder: 'Scrydex team ID' });
     const statusEl = h('div', { class: 'source-status' }, 'Checking…');
+    const cacheInfo = h('p', { class: 'muted small cache-info' });
+    const refreshCacheInfo = async () => {
+      const st = await API.cacheStats();
+      const mb = st.bytes != null ? ` · ${(st.bytes / 1048576).toFixed(1)} MB` : '';
+      const ago = (ms) => (ms < 3600e3 ? `${Math.max(1, Math.round(ms / 60000))} min` : ms < 172800e3 ? `${Math.round(ms / 3600e3)} h` : `${Math.round(ms / 86400e3)} days`);
+      const age = st.oldestPrice ? ` Oldest prices: ${ago(Date.now() - st.oldestPrice)} old.` : '';
+      cacheInfo.textContent = st.sets
+        ? `Saved on this device: ${st.sets} sets, ${st.cards.toLocaleString()} cards${mb}. Card details refresh weekly and prices daily, in the background.${age}`
+        : 'Nothing saved on this device yet.';
+    };
+    refreshCacheInfo();
     const tests = h('div', { class: 'source-tests' });
 
     const refreshStatus = async () => {
@@ -1071,6 +1082,7 @@
         )
       ),
       tests,
+      cacheInfo,
       h(
         'div',
         { class: 'row wrap' },
@@ -1092,7 +1104,19 @@
           ui.icon('refresh'),
           'Refresh my prices'
         ),
-        h('button', { class: 'btn btn--ghost', onclick: () => (API.clearCache(), modelCache.clear(), toast('Card data cache cleared')) }, 'Clear cache')
+        h(
+          'button',
+          {
+            class: 'btn btn--ghost',
+            onclick: async () => {
+              await API.clearCache();
+              modelCache.clear();
+              toast('Card data cache cleared');
+              refreshCacheInfo();
+            },
+          },
+          'Clear cache'
+        )
       )
     );
   }
@@ -1125,6 +1149,14 @@
     document.addEventListener('keydown', (e) => e.key === 'Escape' && document.body.classList.contains('modal-open') && closeModal());
     window.addEventListener('hashchange', () => (closeModal(), render()));
     G.onChange(updateHeader);
+    // Background price refreshes: update owned cards now, reprice affected packs on next view.
+    API.onPrices((setId, cards) => {
+      G.updateMeta(cards);
+      for (const key of [...modelCache.keys()]) {
+        const packSet = key.slice(key.indexOf(':') + 1);
+        if (packSet === setId || (E.SUBSETS[packSet] || []).includes(setId)) modelCache.delete(key);
+      }
+    });
     updateSoundBtn();
     updateHeader();
     tick();

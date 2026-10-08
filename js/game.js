@@ -208,14 +208,19 @@
 
   // ---- prices ------------------------------------------------------------
 
+  // Merge fresh data (full cards or price-only updates) into owned cards' details.
   function updateMeta(cards) {
     const now = Date.now();
     let changed = false;
     for (const c of cards) {
-      if (state.meta[c.id]) {
-        state.meta[c.id] = { ...c, t: now };
-        changed = true;
-      }
+      const old = state.meta[c.id];
+      if (!old) continue;
+      const next = { ...old, ...c, t: now };
+      if (c.p && !Object.keys(c.p).length && old.p && Object.keys(old.p).length) next.p = old.p;
+      const { t: _a, ...a } = old;
+      const { t: _b, ...b } = next;
+      if (JSON.stringify(a) !== JSON.stringify(b)) changed = true;
+      state.meta[c.id] = next;
     }
     if (changed) {
       save();

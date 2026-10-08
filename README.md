@@ -72,6 +72,19 @@ You can also pick a single source. **Test connections** checks all three.
 
 TCGdex uses its own set IDs (e.g. `sv03.5` for 151). The game translates them; `tests/fixtures/tcgdex-set-ids.json` pins the mapping for all 176 sets. TCG Pocket sets, which only exist in TCGdex, aren't offered.
 
+### How card data is cached
+
+Card details and prices are stored separately on your device (in IndexedDB, so there's room for the whole catalog):
+
+| What | Kept for | Then |
+| --- | --- | --- |
+| Set list | 1 day | refreshed in the background to pick up new releases |
+| Card details (names, numbers, rarities, images) | 7 days | refreshed in the background |
+| Prices of rares and up | 1 day | refreshed in the background, prices only |
+| Prices of commons and uncommons | 1 day (7 days on TCGdex) | on TCGdex each price is its own request, and these barely move |
+
+The game never waits for a refresh. It shows the last known prices right away, and new prices apply the next time a pack is shown. It only waits the first time it sees a set. A price is never replaced with "no price" if a source has a gap, and a set that comes back empty (e.g. just released) is retried after an hour. **Profile → Card data** shows what's stored and has a button to clear it.
+
 ### Setting up Scrydex
 
 1. Get an API key and team ID from your Scrydex dashboard.

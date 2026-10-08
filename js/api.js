@@ -58,38 +58,128 @@
   }
 
   // ---- cache -------------------------------------------------------------
+  //
+  // Card details (names, numbers, rarities, images) rarely change, so they're kept for a
+  // week. Prices change daily, so they're stored separately, per card, and refreshed in
+  // the background while the game keeps showing the last known prices. Stored in
+  // IndexedDB (no 5 MB limit), falling back to memory if the browser blocks it.
 
-  function cacheEntry(key) {
-    return U.store.get(CACHE_PREFIX + key, null);
-  }
+  const CATALOG_TTL = 7 * DAY;
+  const PRICE_TTL = DAY;
+  const SLOW_PRICE_TTL = 7 * DAY; // commons/uncommons on per-card price sources (TCGdex)
 
-  function cacheGet(key, ttl) {
-    const e = cacheEntry(key);
-    return e && Date.now() - e.t < ttl ? e.d : null;
-  }
-
-  function evictOldest(except) {
-    let oldest = null;
-    for (const k of U.store.keys()) {
-      if (!k.startsWith(CACHE_PREFIX) || k === CACHE_PREFIX + except || k === CACHE_PREFIX + 'sets') continue;
-      const e = U.store.get(k, null);
-      if (!oldest || !e || e.t < oldest.t) oldest = { k, t: e ? e.t : 0 };
+  const store = (() => {
+    const mem = new Map();
+    let dbp = null;
+    function open() {
+      if (!dbp) {
+        dbp = new Promise((resolve) => {
+          try {
+            if (!root.indexedDB) return resolve(null);
+            const req = root.indexedDB.open('packrush', 1);
+            req.onupgradeneeded = () => req.result.createObjectStore('kv');
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => resolve(null);
+            req.onblocked = () => resolve(null);
+          } catch {
+            resolve(null);
+          }
+        });
+      }
+      return dbp;
     }
-    if (!oldest) return false;
-    U.store.remove(oldest.k);
-    return true;
-  }
-
-  function cachePut(key, data) {
-    const entry = { t: Date.now(), d: data };
-    for (let i = 0; i < 40; i++) {
-      if (U.store.set(CACHE_PREFIX + key, entry)) return;
-      if (!evictOldest(key)) return;
+    function run(db, mode, fn) {
+      return new Promise((resolve) => {
+        try {
+          const tx = db.transaction('kv', mode);
+          const req = fn(tx.objectStore('kv'));
+          tx.oncomplete = () => resolve(req ? req.result : undefined);
+          tx.onerror = tx.onabort = () => resolve(undefined); // e.g. quota: just don't cache
+        } catch {
+          resolve(undefined);
+        }
+      });
     }
+    return {
+      async get(k) {
+        const db = await open();
+        const v = db ? await run(db, 'readonly', (s) => s.get(k)) : mem.get(k);
+        return v == null ? null : v;
+      },
+      async set(k, v) {
+        const db = await open();
+        if (db) await run(db, 'readwrite', (s) => s.put(v, k));
+        else mem.set(k, v);
+      },
+      async keys() {
+        const db = await open();
+        return db ? (await run(db, 'readonly', (s) => s.getAllKeys())) || [] : [...mem.keys()];
+      },
+      async clear() {
+        const db = await open();
+        if (db) await run(db, 'readwrite', (s) => s.clear());
+        mem.clear();
+      },
+    };
+  })();
+
+  const priceOnly = (c) => {
+    const out = { id: c.id, p: c.p || {} };
+    if (c.cm) out.cm = c.cm;
+    if (c.cmr) out.cmr = c.cmr;
+    return out;
+  };
+
+  function splitCards(cards, t) {
+    const catalog = cards.map(({ p, cm, cmr, ...rest }) => rest);
+    const prices = {};
+    for (const c of cards) prices[c.id] = { ...priceOnly(c), t };
+    return { catalog, prices };
   }
 
-  function clearCache() {
+  function mergeCards(catalog, prices) {
+    return catalog.map((c) => {
+      const e = prices[c.id];
+      if (!e) return { ...c, p: {} };
+      const out = { ...c, p: e.p || {} };
+      if (e.cm) out.cm = e.cm;
+      if (e.cmr) out.cmr = e.cmr;
+      return out;
+    });
+  }
+
+  async function saveSet(setId, cards, t = Date.now()) {
+    const { catalog, prices } = splitCards(cards, t);
+    await store.set('catalog:' + setId, { t, d: catalog });
+    await store.set('prices:' + setId, { t, d: prices });
+  }
+
+  let memSets = [];
+  let ready = null;
+
+  // One-time move of the old localStorage cache into the new store.
+  function init() {
+    if (!ready) {
+      ready = (async () => {
+        for (const k of U.store.keys()) {
+          if (!k.startsWith(CACHE_PREFIX)) continue;
+          const e = U.store.get(k, null);
+          const name = k.slice(CACHE_PREFIX.length);
+          if (e && e.d && name === 'sets') await store.set('sets', e);
+          else if (e && e.d && name.startsWith('cards.')) await saveSet(name.slice(6), e.d, e.t);
+          U.store.remove(k);
+        }
+        const sets = await store.get('sets');
+        if (sets) memSets = sets.d;
+      })().catch(() => {});
+    }
+    return ready;
+  }
+
+  async function clearCache() {
+    await store.clear();
     for (const k of U.store.keys()) if (k.startsWith(CACHE_PREFIX)) U.store.remove(k);
+    memSets = [];
   }
 
   // ---- source 1: Pokémon TCG API (pokemontcg.io) ---------------------------
@@ -165,6 +255,16 @@
       for (let page = 1; page < 20; page++) {
         const json = await legacyRequest('/cards', { q: `set.id:${setId}`, pageSize: 250, page, select: SELECT }, opts);
         all.push(...json.data.map(compactCard));
+        if (!json.data.length || all.length >= (json.totalCount || 0)) break;
+      }
+      return all;
+    },
+    // Prices only: same pages, much smaller responses.
+    async getSetPrices(setId, ids, opts) {
+      const all = [];
+      for (let page = 1; page < 20; page++) {
+        const json = await legacyRequest('/cards', { q: `set.id:${setId}`, pageSize: 250, page, select: 'id,tcgplayer,cardmarket' }, opts);
+        all.push(...json.data.map((c) => priceOnly(compactCard(c))));
         if (!json.data.length || all.length >= (json.totalCount || 0)) break;
       }
       return all;
@@ -312,6 +412,10 @@
     getSetCards(setId, opts) {
       return scrydexPages(`/expansions/${encodeURIComponent(setId)}/cards`, { include: 'prices' }, scrydexCard, opts);
     },
+    // Prices come with the cards, so this costs the same credits as a full load.
+    async getSetPrices(setId, ids, opts) {
+      return (await scrydex.getSetCards(setId, opts)).map(priceOnly);
+    },
     async getCardsByIds(ids, opts) {
       const out = [];
       try {
@@ -397,7 +501,7 @@
       const card = await fetchJson(`${base}/en/cards/${encodeURIComponent(cardId)}`, {}, { retries: 1, timeout: 30000, ...opts });
       return card.pricing || null;
     } catch {
-      return null; // a card without a price still opens fine; it falls back to rarity defaults
+      return undefined; // failed: keep whatever price we already had
     } finally {
       tcgdexDone();
     }
@@ -463,6 +567,17 @@
     return (await tcgdexIdCache)[id] || id;
   }
 
+  // TCGdex's card list for a set (gives the exact ids its price endpoint needs).
+  const tcgdexLists = new Map();
+  function tcgdexSetCardListCached(setId, opts) {
+    if (!tcgdexLists.has(setId)) {
+      const p = tcgdexSetCardList(setId, opts);
+      p.catch(() => tcgdexLists.delete(setId));
+      tcgdexLists.set(setId, p);
+    }
+    return tcgdexLists.get(setId);
+  }
+
   async function tcgdexSetCardList(setId, opts) {
     const tid = await toTcgdexSet(setId, opts);
     const data = await tcgdexGraphql(`{ set(filters: { id: ${JSON.stringify('eq:' + tid)} }) { id cards { id localId name rarity category image } } }`, opts);
@@ -482,8 +597,16 @@
     async getSetCards(setId, opts) {
       const list = await tcgdexSetCardList(setId, opts);
       if (!list.length) throw new Error(`TCGdex has no cards for ${setId}`);
+      tcgdexLists.set(setId, Promise.resolve(list));
       const prices = await Promise.all(list.map((c) => tcgdexPricing(c.id, opts)));
       return list.map((c, i) => tcgdexCard(c, setId, prices[i]));
+    },
+    // One request per card, so only the cards that are due get refreshed.
+    async getSetPrices(setId, ids, opts) {
+      const want = new Set(ids);
+      const list = (await tcgdexSetCardListCached(setId, opts)).filter((c) => want.has(`${setId}-${fromTcgdexNumber(String(c.localId))}`));
+      const prices = await Promise.all(list.map((c) => tcgdexPricing(c.id, opts)));
+      return list.map((c, i) => (prices[i] === undefined ? null : priceOnly(tcgdexCard(c, setId, prices[i])))).filter(Boolean);
     },
     async getCardsByIds(ids, opts) {
       const bySet = {};
@@ -493,9 +616,9 @@
       }
       const out = [];
       for (const [setId, want] of Object.entries(bySet)) {
-        const list = (await tcgdexSetCardList(setId, opts)).filter((c) => want.has(`${setId}-${fromTcgdexNumber(String(c.localId))}`));
+        const list = (await tcgdexSetCardListCached(setId, opts)).filter((c) => want.has(`${setId}-${fromTcgdexNumber(String(c.localId))}`));
         const prices = await Promise.all(list.map((c) => tcgdexPricing(c.id, opts)));
-        out.push(...list.map((c, i) => tcgdexCard(c, setId, prices[i])));
+        out.push(...list.map((c, i) => (prices[i] === undefined ? null : tcgdexCard(c, setId, prices[i]))).filter(Boolean));
       }
       return out;
     },
@@ -552,42 +675,143 @@
     return p;
   }
 
-  async function withStaleFallback(key, ttl, force, load) {
-    const fresh = !force && cacheGet(key, ttl);
-    if (fresh) return fresh;
-    return once(key, async () => {
+  // Refresh without making anyone wait; failures just keep the cached data.
+  function background(key, fn) {
+    if (inflight.has(key)) return;
+    once(key, fn).catch(() => {});
+  }
+
+  const priceListeners = new Set();
+  function onPrices(fn) {
+    priceListeners.add(fn);
+  }
+  function notify(setId, cards) {
+    priceListeners.forEach((fn) => {
       try {
-        const data = await load();
-        cachePut(key, data);
-        return data;
-      } catch (e) {
-        const stale = cacheEntry(key);
-        if (stale) return stale.d;
-        throw e;
-      }
+        fn(setId, cards);
+      } catch {}
     });
   }
 
-  function getSets(force) {
-    return withStaleFallback('sets', DAY, force, () => call('getSets'));
+  async function loadSets() {
+    const d = await call('getSets');
+    await store.set('sets', { t: Date.now(), d });
+    memSets = d;
+    return d;
   }
 
-  function getSetCards(setId, force) {
-    return withStaleFallback('cards.' + setId, DAY, force, () => call('getSetCards', setId));
+  async function getSets(force) {
+    await init();
+    const e = await store.get('sets');
+    if (e && !force) {
+      memSets = e.d;
+      if (Date.now() - e.t > DAY) background('sets', loadSets); // pick up newly released sets
+      return e.d;
+    }
+    try {
+      return await once('sets', loadSets);
+    } catch (err) {
+      if (e) return e.d;
+      throw err;
+    }
   }
 
-  function getCardsByIds(ids) {
-    return call('getCardsByIds', ids);
+  async function loadSet(setId) {
+    const cards = await call('getSetCards', setId);
+    await saveSet(setId, cards);
+    notify(setId, cards);
+    return cards;
+  }
+
+  function isSlowCard(card) {
+    const E = PP.economy;
+    return !!E && E.tierRank(E.tierOf(card)) < E.tierRank('R');
+  }
+
+  // Refresh the prices that are due. Rares and up are due daily; commons and uncommons
+  // weekly (only matters for TCGdex, where each price is a separate request).
+  async function loadPrices(setId, catalog, prev) {
+    const now = Date.now();
+    const due = catalog
+      .filter((c) => {
+        const e = prev[c.id];
+        if (!e) return true;
+        return now - (e.t || 0) > (isSlowCard({ ...c, ...e }) ? SLOW_PRICE_TTL : PRICE_TTL);
+      })
+      .map((c) => c.id);
+    const next = { ...prev };
+    if (due.length) {
+      const fresh = await call('getSetPrices', setId, due);
+      for (const x of fresh) {
+        const old = next[x.id];
+        // Never replace a known price with "no price" (gaps differ between sources).
+        const keep = old && Object.keys(old.p || {}).length && !Object.keys(x.p || {}).length;
+        next[x.id] = keep ? { ...old, t: now } : { ...x, t: now };
+      }
+    }
+    await store.set('prices:' + setId, { t: now, d: next });
+    const cards = mergeCards(catalog, next);
+    notify(setId, cards);
+    return cards;
+  }
+
+  // Cached card details and prices come back immediately; anything stale refreshes in the
+  // background (onPrices listeners hear about it). Only a set never seen before waits.
+  async function getSetCards(setId, force) {
+    await init();
+    const [cat, pr] = await Promise.all([store.get('catalog:' + setId), store.get('prices:' + setId)]);
+    // An empty set (e.g. just released, cards not added yet) is retried after an hour.
+    const emptyAndOld = cat && !cat.d.length && Date.now() - cat.t > PP.HOUR;
+    if (!cat || force || emptyAndOld) {
+      try {
+        return await once('set:' + setId, () => loadSet(setId));
+      } catch (e) {
+        if (cat) return mergeCards(cat.d, pr ? pr.d : {});
+        throw e;
+      }
+    }
+    const now = Date.now();
+    if (!pr) return once('prices:' + setId, () => loadPrices(setId, cat.d, {}));
+    if (now - cat.t > CATALOG_TTL) background('set:' + setId, () => loadSet(setId));
+    else if (now - pr.t > PRICE_TTL) background('prices:' + setId, () => loadPrices(setId, cat.d, pr.d));
+    return mergeCards(cat.d, pr.d);
+  }
+
+  // Fresh prices for specific (owned) cards; also updates the set price caches.
+  async function getCardsByIds(ids) {
+    await init();
+    const cards = await call('getCardsByIds', ids);
+    const now = Date.now();
+    const bySet = {};
+    for (const c of cards) (bySet[c.s] = bySet[c.s] || []).push(c);
+    for (const [setId, list] of Object.entries(bySet)) {
+      const pr = (await store.get('prices:' + setId)) || { t: 0, d: {} };
+      for (const c of list) pr.d[c.id] = { ...priceOnly(c), t: now };
+      await store.set('prices:' + setId, pr);
+    }
+    return cards;
   }
 
   function peekSets() {
-    const e = cacheEntry('sets');
-    return e ? e.d : [];
+    return memSets;
   }
 
-  function peekSetCards(setId) {
-    const e = cacheEntry('cards.' + setId);
-    return e ? e.d : null;
+  async function cacheStats() {
+    await init();
+    const keys = (await store.keys()).filter((k) => String(k).startsWith('catalog:'));
+    let cards = 0;
+    let oldestPrice = null;
+    for (const k of keys) {
+      const cat = await store.get(k);
+      const pr = await store.get('prices:' + String(k).slice(8));
+      if (cat) cards += cat.d.length;
+      if (pr && (oldestPrice == null || pr.t < oldestPrice)) oldestPrice = pr.t;
+    }
+    let bytes = null;
+    try {
+      if (root.navigator && navigator.storage && navigator.storage.estimate) bytes = (await navigator.storage.estimate()).usage;
+    } catch {}
+    return { sets: keys.length, cards, oldestPrice, bytes };
   }
 
   // Check each source once (Scrydex costs one credit).
@@ -624,8 +848,9 @@
     getSets,
     getSetCards,
     peekSets,
-    peekSetCards,
     getCardsByIds,
+    onPrices,
+    cacheStats,
     clearCache,
     testSources,
     status,
