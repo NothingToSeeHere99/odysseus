@@ -4,10 +4,10 @@ A browser game for opening real Pokémon TCG booster packs. It has a rotating sh
 
 ## Playing
 
-Open `index.html` in a browser. There's nothing to build or install. To serve it over HTTP instead:
+Open `index.html` in a browser. There's nothing to build or install. To serve it over HTTP instead (Node 18+):
 
 ```sh
-npm start   # serves on http://localhost:8080
+npm start   # serves on http://localhost:8787
 ```
 
 Progress is saved in the browser's local storage. To move it to another device, use **Profile → Export save**.
@@ -17,7 +17,7 @@ Progress is saved in the browser's local storage. To move it to another device, 
 - **Income:** you start with $50 and earn $10 every hour. Income keeps building while the game is closed, up to 48 hours' worth.
 - **Shop:**
   - **Featured:** the newest set is always in stock.
-  - **Rotating packs:** 12 packs from across the TCG's history (2 vintage, 3 classic, 3 modern, 3 current and 1 wildcard, often a small special set like Celebrations or a McDonald's collection). They restock every 12 hours at 00:00 and 12:00 UTC. The rotation is seeded from the clock, so everyone sees the same lineup.
+  - **Rotating packs:** 13 packs from across the TCG's history (2 vintage, 3 classic, 3 modern, 3 current, 1 Black Star promo pack and 1 wildcard, often a small special set like Celebrations or a McDonald's collection). They restock every 12 hours at 00:00 and 12:00 UTC. The rotation is seeded from the clock, so everyone sees the same lineup.
   - **Mystery pack:** a random pack from the current rotation, priced at the rotation's average.
   - **Bundles:** any pack can be bought as a 6-pack bundle for 5% off.
   - **Odds & cards:** every pack has a details screen with its top 8 chase cards, pull rates ("1 in 27 packs") and how its price was calculated.
@@ -35,6 +35,11 @@ Progress is saved in the browser's local storage. To move it to another device, 
 | e-Card → Sword & Shield | 10 | 5 common, 3 uncommon, 1 reverse holo, 1 rare/holo/ultra/secret |
 | Scarlet & Violet onward | 10 | 4 common, 3 uncommon, 1 reverse holo, 1 reverse-or-illustration-rare, 1 rare/double/ultra/hyper |
 | Small special sets (under 30 cards) and McDonald's | 4 | 3 cards from anywhere in the set, 1 rare slot |
+| Black Star promos | 3 | any 3 different promos from that era's promo set |
+
+Promo cards all share the rarity "Promo", so the game ranks them by market value: $3+ counts as Holo Rare, $10+ Double Rare, $30+ Ultra Rare and $100+ Secret Rare. A valuable promo gets the same face-down reveal as any other big pull.
+
+What isn't sold as a pack: trainer kits, energy sets, Pokémon Futsal and sets under 10 cards. Japanese-exclusive sets aren't in the card database.
 
 The API has about 50 different rarity names. The game groups them into 8 tiers (Common → Secret Rare) and uses approximate real pull rates for each era. If a set doesn't have a tier, that tier's share is spread across the tiers it does have. The best card in a pack is always revealed last.
 
@@ -48,9 +53,36 @@ price          = (expected value × 1.2 + $1) × age premium   → rounded to $x
 
 The age premium is meant to match sealed-pack prices in real life: about ×1.0 for a new set, about ×3.6 at 10 years, about ×10 at 20 years, and ×17+ for 25-year-old WOTC packs. Some examples: new Scarlet & Violet packs come out around $4–8, XY-era packs around $15–25, and Base Set era packs hit the $500 cap. Each shop tile has a **Why this price?** section that shows this calculation for that pack.
 
-## API key
+## Card data sources
 
-You don't need a key, but anonymous requests have a lower rate limit. You can get a free key at <https://dev.pokemontcg.io> and paste it in **Profile → Card data**. Card data is cached in the browser for 24 hours.
+Cards, images and prices come from one of two places:
+
+| Source | Cost | Status |
+| --- | --- | --- |
+| [Pokémon TCG API](https://pokemontcg.io) | Free (an optional free key from dev.pokemontcg.io raises the rate limit) | **Goes offline on March 1, 2027** |
+| [Scrydex](https://scrydex.com) | Paid, from $29/month for 5,000 credits | The official successor |
+
+By default (**Profile → Card data → Automatic**) the game uses the free API. If Scrydex is set up, the game uses it as a backup when the free API is down and switches to it completely after March 1, 2027. Card IDs are the same on both, so your collection carries over.
+
+### Setting up Scrydex
+
+1. Get an API key and team ID from your Scrydex dashboard.
+2. Start the bundled server with them:
+
+   ```sh
+   SCRYDEX_API_KEY=your-key SCRYDEX_TEAM_ID=your-team npm start
+   ```
+
+3. Open http://localhost:8787. The game finds the server automatically. **Profile → Card data** should show "connected through the Pack Rush server".
+
+The server (`server/proxy.js`, no dependencies):
+- keeps the key on your computer instead of in the browser, as Scrydex recommends
+- caches Scrydex responses on disk for 12 hours (`CACHE_HOURS` to change), so reloading or playing on another browser doesn't spend credits again
+- only listens on 127.0.0.1 unless you set `HOST`; set `PORT` to change the port
+
+If you host the game somewhere else, enter the server's address under **Server URL**. You can also paste a key straight into the browser instead. Scrydex advises against that, and its API may refuse requests made directly from a web page.
+
+Each Scrydex request costs 1 credit, and a set takes 1–3 requests. Card data is cached in the browser for 24 hours, so a normal day of play costs a few dozen credits.
 
 ## Development
 
@@ -58,7 +90,8 @@ You don't need a key, but anonymous requests have a lower rate limit. You can ge
 index.html
 css/styles.css
 js/util.js         helpers, seeded RNG, storage
-js/api.js          pokemontcg.io client + cache
+js/api.js          card data sources (Pokémon TCG API, Scrydex) + cache
+server/proxy.js    optional local server: serves the game, proxies Scrydex
 js/economy.js      rarity tiers, pull rates, pricing, shop rotation
 js/game.js         wallet, income, collection, buy/sell
 js/components.js   icons, booster pack, card back, rarity marks
@@ -70,6 +103,6 @@ js/ui.js           views and routing
 tests/             node unit tests for the economy
 ```
 
-Run the tests with `npm test`. They need Node 18 or newer.
+Run the tests with `npm test`. They need Node 18 or newer and cover the economy, both card data sources and the server.
 
 Pokémon and all card names, images and trademarks belong to Nintendo, Creatures Inc. and GAME FREAK inc. This is a private fan project and isn't affiliated with or endorsed by them.

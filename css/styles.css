@@ -149,6 +149,7 @@ select.input { padding-right: 34px; appearance: none; background: var(--surface)
 .chip--current { background: linear-gradient(135deg, #a26bff, #7444e6); }
 .chip--special { background: linear-gradient(135deg, #ff6fa8, #e0437d); }
 .chip--mystery { background: linear-gradient(135deg, #3a2470, #1b1038); }
+.chip--promo { background: linear-gradient(135deg, #2a2a33, #050507); color: #ffd76a; }
 .chip--new { background: linear-gradient(135deg, #2fd27a, #12a85b); color: #fff; letter-spacing: 0.06em; }
 .chip--foil { background: linear-gradient(120deg, #e3f0ff, #f6e6ff, #e5fff2); color: #4a3d9a; }
 .chip--gold { background: linear-gradient(135deg, #ffe680, #f0b400); color: #4a3300; }
@@ -298,6 +299,13 @@ select.input { padding-right: 34px; appearance: none; background: var(--surface)
 .pack--mystery .pack__cap { background: repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.25) 0 1.5px, rgba(0, 0, 0, 0.15) 1.5px 4px), linear-gradient(#9b7ae0, #5a3aa8); }
 .pack--mystery .pack__body::after { background: repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.2) 0 1.5px, rgba(0, 0, 0, 0.2) 1.5px 4px), linear-gradient(#3a2275, #241450); }
 .pack--mystery .pack__logo { top: 14%; height: 52%; }
+.pack--promo .pack__body { background:
+  radial-gradient(130% 70% at 50% 0%, rgba(255, 215, 110, 0.35), transparent 60%),
+  repeating-linear-gradient(135deg, rgba(255, 210, 90, 0.06) 0 2px, transparent 2px 9px),
+  linear-gradient(172deg, #3a3a44, #17171d 55%, #050507); }
+.pack--promo .pack__cap { background: repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.25) 0 1.5px, rgba(0, 0, 0, 0.2) 1.5px 4px), linear-gradient(#f6d77a, #b8870f); }
+.pack--promo .pack__body::after { background: repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.2) 0 1.5px, rgba(0, 0, 0, 0.25) 1.5px 4px), linear-gradient(#c9971c, #7a5600); }
+.pack--promo .pack__band { color: #ffd76a; background: linear-gradient(90deg, transparent, rgba(0, 0, 0, 0.6) 20%, rgba(0, 0, 0, 0.6) 80%, transparent); }
 .pack__q { font-size: calc(var(--w) * 0.62); font-weight: 900; line-height: 1; background: linear-gradient(180deg, #fff8cf, #ffd23a 50%, #f08c00); -webkit-background-clip: text; background-clip: text; color: transparent; filter: drop-shadow(0 4px 10px rgba(255, 190, 40, 0.55)); animation: qPulse 2.4s ease-in-out infinite; }
 @keyframes qPulse { 50% { transform: scale(1.06) rotate(-4deg); } }
 
@@ -699,6 +707,20 @@ select.input { padding-right: 34px; appearance: none; background: var(--surface)
 .log__val { font-weight: 900; font-variant-numeric: tabular-nums; }
 .settings { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
 .span-2 { grid-column: span 2; }
+.notice { display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; border-radius: var(--r-md); background: #fff6db; color: #6b4b00; margin: 6px 0 14px; }
+.notice > .ico { width: 22px; height: 22px; margin-top: 2px; color: var(--gold-2); }
+.notice p { margin: 4px 0 0; font-size: 13.5px; }
+.source-status { display: flex; flex-wrap: wrap; gap: 8px 28px; padding: 12px 16px; border-radius: var(--r-md); background: var(--surface-2); font-size: 14px; }
+.source-status > div { display: grid; }
+.source-status span { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-3); }
+.source-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.source-grid h4 { margin-top: 10px; }
+.adv summary { cursor: pointer; font-weight: 800; color: var(--brand); font-size: 13px; margin-top: 4px; }
+.source-tests { display: grid; gap: 8px; margin: 6px 0 14px; }
+.source-tests:empty { display: none; }
+.source-test { display: flex; justify-content: space-between; gap: 12px; padding: 10px 14px; border-radius: 12px; font-size: 14px; }
+.source-test.is-ok { background: #e3f9ec; color: #0b6b3a; }
+.source-test.is-bad { background: #fde8e8; color: #9b1c1f; }
 .how { padding-left: 20px; color: var(--ink-2); display: grid; gap: 8px; margin: 0; }
 
 /* =========================================================================
@@ -829,6 +851,7 @@ select.input { padding-right: 34px; appearance: none; background: var(--surface)
   .sum-hero__meta { grid-area: meta; justify-content: flex-start; }
   .sum-hero__price { grid-area: price; font-size: 24px; }
   .span-2 { grid-column: auto; }
+  .source-grid { grid-template-columns: 1fr; gap: 0; }
   .best { flex-direction: column; text-align: center; }
   .showcase { grid-template-columns: 1fr; gap: 20px; justify-items: center; text-align: center; }
   .showcase__card { width: min(300px, 78vw); }

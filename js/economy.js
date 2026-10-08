@@ -23,8 +23,24 @@
   // Used only when a card has no market price at all.
   const DEFAULT_PRICE = { C: 0.1, U: 0.15, R: 0.35, RH: 1, DR: 2, IR: 5, UR: 6, SR: 15 };
 
+  // Promo cards all share the rarity "Promo", so their tier comes from market value instead.
+  const PROMO_TIERS = [
+    [100, 'SR'],
+    [30, 'UR'],
+    [10, 'DR'],
+    [3, 'RH'],
+  ];
+
   // The API uses ~50 different rarity strings across eras; fold them into 8 tiers.
+  // Accepts a rarity string or a card (needed for promos).
   function tierOf(rarity) {
+    if (rarity && typeof rarity === 'object') {
+      const card = rarity;
+      if (!/^promo$/i.test(String(card.r || '').trim())) return tierOf(card.r);
+      const v = cardValue(card);
+      for (const [min, t] of PROMO_TIERS) if (v >= min) return t;
+      return 'R';
+    }
     const r = String(rarity || '').toLowerCase().trim();
     if (!r || r === 'common') return 'C';
     if (r === 'uncommon') return 'U';
@@ -115,11 +131,17 @@
   };
   const SUBSET_IDS = new Set(Object.values(SUBSETS).flat());
 
+  // Black Star promo sets (and similar promo collections) open as promo packs.
+  function isPromo(set) {
+    return /promo|best of game/i.test(set.name);
+  }
+
   function isMini(set) {
-    return /mcdonald/i.test(set.name) || (set.total > 0 && set.total < 30);
+    return !isPromo(set) && (/mcdonald/i.test(set.name) || (set.total > 0 && set.total < 30));
   }
 
   function eraOf(set) {
+    if (isPromo(set)) return 'promo';
     if (isMini(set)) return 'mini';
     const t = U.parseDate(set.date);
     if (t < Date.UTC(2002, 8, 1)) return 'wotc'; // Base Set through Legendary Collection
@@ -128,6 +150,7 @@
   }
 
   function bucketOf(set) {
+    if (isPromo(set)) return 'promo';
     if (isMini(set)) return 'special';
     const y = U.yearOf(set.date);
     if (y < 2003) return 'vintage';
@@ -136,7 +159,7 @@
     return 'current';
   }
 
-  const BUCKET_LABEL = { vintage: 'Vintage', classic: 'Classic', modern: 'Modern', current: 'Current', special: 'Special' };
+  const BUCKET_LABEL = { vintage: 'Vintage', classic: 'Classic', modern: 'Modern', current: 'Current', special: 'Special', promo: 'Promo' };
 
   // ---- pack layouts ------------------------------------------------------
 
@@ -145,6 +168,7 @@
     reverse: [['C', 5], ['U', 3], ['REV', 1], ['RARE', 1]],
     sv: [['C', 4], ['U', 3], ['REV', 1], ['HIT', 1], ['RARE', 1]],
     mini: [['ANY', 3], ['RARE', 1]],
+    promo: [['ANY', 3]],
   };
 
   // Approximate real pull rates for the rare slot. Tiers a set lacks are dropped
@@ -162,7 +186,7 @@
   function buildPools(cards) {
     const pools = { ALL: cards.slice() };
     for (const t of TIERS) pools[t] = [];
-    for (const c of cards) pools[tierOf(c.r)].push(c);
+    for (const c of cards) pools[tierOf(c)].push(c);
     return pools;
   }
 
@@ -269,7 +293,7 @@
         let p = 0;
         for (const d of s.dist) {
           const pool = model.pools[d.tier];
-          const frac = d.tier === 'ALL' ? pool.filter((c) => tierRank(tierOf(c.r)) >= r).length / pool.length : tierRank(d.tier) >= r ? 1 : 0;
+          const frac = d.tier === 'ALL' ? pool.filter((c) => tierRank(tierOf(c)) >= r).length / pool.length : tierRank(d.tier) >= r ? 1 : 0;
           p += d.w * frac;
         }
         none *= Math.pow(1 - p, s.n);
@@ -296,7 +320,7 @@
         }
         used.add(card.id);
         const variant = variantFor(card, d.kind, d.tier);
-        pulls.push({ card, variant, tier: tierOf(card.r), price: priceOf(card, variant), slot: s.slot });
+        pulls.push({ card, variant, tier: tierOf(card), price: priceOf(card, variant), slot: s.slot });
       }
     }
     // Save the best for last: the special slots reveal in ascending order.
@@ -309,12 +333,12 @@
 
   // ---- shop --------------------------------------------------------------
 
-  const EXCLUDE = /promo|trainer gallery|galarian gallery|shiny vault|futsal|trainer kit|energies|classic collection|best of game/i;
+  const EXCLUDE = /trainer gallery|galarian gallery|shiny vault|futsal|trainer kit|energies|classic collection/i;
 
   function isEligible(set, now) {
     if (EXCLUDE.test(set.name) || SUBSET_IDS.has(set.id)) return false;
     if (U.parseDate(set.date) > now) return false;
-    if (/mcdonald/i.test(set.name)) return set.total >= 6;
+    if (isPromo(set) || /mcdonald/i.test(set.name)) return set.total >= 6;
     return set.total >= 10;
   }
 
@@ -323,6 +347,7 @@
     ['classic', 3],
     ['modern', 3],
     ['current', 3],
+    ['promo', 1],
     ['wild', 1],
   ];
 
@@ -336,7 +361,7 @@
 
   // The newest full-size set is always on the shelf.
   function featuredSet(sets, now = Date.now()) {
-    return sets.filter((s) => isEligible(s, now) && !isMini(s)).sort((a, b) => U.parseDate(b.date) - U.parseDate(a.date))[0] || null;
+    return sets.filter((s) => isEligible(s, now) && !isMini(s) && !isPromo(s)).sort((a, b) => U.parseDate(b.date) - U.parseDate(a.date))[0] || null;
   }
 
   // Same rotation index -> same packs for everyone. Only sets released before the
@@ -347,7 +372,7 @@
     const featured = featuredSet(sets, now);
     const rng = U.mulberry32(U.hashStr('packrush-shop-' + idx));
     const eligible = sets.filter((s) => isEligible(s, start) && (!featured || s.id !== featured.id)).sort((a, b) => (a.id < b.id ? -1 : 1));
-    const buckets = { vintage: [], classic: [], modern: [], current: [], special: [] };
+    const buckets = { vintage: [], classic: [], modern: [], current: [], special: [], promo: [] };
     for (const s of eligible) buckets[bucketOf(s)].push(s);
 
     const rotation = [];
@@ -386,6 +411,7 @@
     eraOf,
     bucketOf,
     isMini,
+    isPromo,
     agePremium,
     charm,
     bundlePrice,

@@ -18,7 +18,7 @@
   }
 
   function cardEl(card, opts = {}) {
-    const tier = opts.tier || E.tierOf(card.r);
+    const tier = opts.tier || E.tierOf(card);
     const effect = effectFor(tier, opts.variant);
     const img = h('img', {
       class: 'pcard__img',

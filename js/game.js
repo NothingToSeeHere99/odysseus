@@ -118,7 +118,7 @@
       e.at = now;
       value += pull.price;
       if (!state.stats.best || pull.price > state.stats.best.price) {
-        state.stats.best = { id: card.id, name: card.n, img: card.img, big: card.big, r: card.r, v: variant, price: pull.price, set: model.set.name, at: now };
+        state.stats.best = { id: card.id, name: card.n, img: card.img, big: card.big, r: card.r, tier: pull.tier, v: variant, price: pull.price, set: model.set.name, at: now };
       }
     }
     state.stats.packs += 1;

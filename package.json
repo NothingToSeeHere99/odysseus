@@ -3,7 +3,7 @@
   "private": true,
   "description": "Pokémon TCG pack opening game with a rotating shop.",
   "scripts": {
-    "start": "npx --yes http-server -c-1 -p 8080 .",
+    "start": "node server/proxy.js",
     "test": "node --test tests/*.test.js"
   }
 }

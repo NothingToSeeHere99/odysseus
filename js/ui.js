@@ -134,7 +134,7 @@
       ui.icon('info', 'ico--lg'),
       h('h3', null, 'Couldn’t reach the card database'),
       h('p', { class: 'muted' }, String(err && err.message ? err.message : err)),
-      h('p', { class: 'muted small' }, 'The free pokemontcg.io API can be slow or rate limited. Adding a free API key on the Profile tab helps.'),
+      h('p', { class: 'muted small' }, 'The free Pokémon TCG API can be slow, rate limited or offline. You can add an API key or set up Scrydex as a backup on the Profile tab.'),
       h('button', { class: 'btn btn--primary', onclick: retry }, ui.icon('refresh'), 'Try again')
     );
   }
@@ -214,7 +214,7 @@
       h('div', { class: 'restock__bar', 'data-rotation-bar': '' }, h('i'))
     );
     const grid = h('div', { class: 'shop-grid' });
-    v.append(hero, h('div', { class: 'section-head' }, h('div', null, h('h2', null, 'Rotating packs'), h('p', { class: 'muted' }, 'Twelve sets from across the game’s history, plus a mystery pack. The lineup changes every 12 hours.')), restock), grid);
+    v.append(hero, h('div', { class: 'section-head' }, h('div', null, h('h2', null, 'Rotating packs'), h('p', { class: 'muted' }, 'Thirteen packs from across the game’s history, including a Black Star promo pack, plus a mystery pack. The lineup changes every 12 hours.')), restock), grid);
     tick();
 
     let sets;
@@ -344,7 +344,7 @@
       'div',
       { class: 'hero__fan' },
       model.chase.slice(0, 2).map((c, i) => {
-        const el = C.cardEl(c.card, { tier: E.tierOf(c.card.r), variant: 'holofoil', interactive: true, className: `fan-${i}` });
+        const el = C.cardEl(c.card, { tier: E.tierOf(c.card), variant: 'holofoil', interactive: true, className: `fan-${i}` });
         el.addEventListener('click', () => showPackDetails(model));
         return el;
       })
@@ -381,7 +381,7 @@
         h(
           'div',
           { class: 'chase' },
-          C.cardEl(c.card, { tier: E.tierOf(c.card.r), variant: 'holofoil', interactive: true }),
+          C.cardEl(c.card, { tier: E.tierOf(c.card), variant: 'holofoil', interactive: true }),
           h('div', { class: 'chase__name', title: c.card.n }, c.card.n),
           h('div', { class: 'chase__price' }, U.money(c.value))
         )
@@ -593,7 +593,7 @@
       if (!mine.length) return h('div', { class: 'pocket is-missing' }, set.symbol ? h('img', { class: 'pocket__symbol', src: set.symbol, alt: '' }) : null, h('span', { class: 'pocket__no' }, `#${c.no}`), h('span', { class: 'pocket__name' }, c.n));
       const best = mine.sort((a, b) => b.price - a.price)[0];
       const n = mine.reduce((s, e) => s + e.n, 0);
-      const card = C.cardEl(c, { variant: best.v, tier: E.tierOf(c.r), interactive: true });
+      const card = C.cardEl(c, { variant: best.v, tier: E.tierOf(c), interactive: true });
       return h('button', { class: 'pocket is-owned', onclick: () => showCard(c.id) }, card, n > 1 ? h('span', { class: 'count' }, `×${n}`) : null);
     };
 
@@ -636,7 +636,7 @@
     const copies = G.copiesOf(id).sort((a, b) => b.price - a.price);
     if (!copies.length) return closeModal();
     const meta = copies[0].meta;
-    const tier = E.tierOf(meta.r);
+    const tier = E.tierOf(meta);
     const card = C.cardEl(meta, { variant: copies[0].v, tier, big: true, eager: true, interactive: true, auto: true });
     C.upgrade(card);
     const rows = copies.map((e) =>
@@ -795,18 +795,18 @@
     const draw = () => {
       const q = colPrefs.q.trim().toLowerCase();
       const min = colPrefs.tier === 'all' ? -1 : E.tierRank(colPrefs.tier);
-      const list = G.entries().filter((e) => e.meta && (!q || e.meta.n.toLowerCase().includes(q)) && E.tierRank(E.tierOf(e.meta.r)) >= min);
+      const list = G.entries().filter((e) => e.meta && (!q || e.meta.n.toLowerCase().includes(q)) && E.tierRank(E.tierOf(e.meta)) >= min);
       const sorts = {
         value: (a, b) => b.price - a.price,
         recent: (a, b) => (b.at || 0) - (a.at || 0),
         name: (a, b) => a.meta.n.localeCompare(b.meta.n),
-        rarity: (a, b) => E.tierRank(E.tierOf(b.meta.r)) - E.tierRank(E.tierOf(a.meta.r)) || b.price - a.price,
+        rarity: (a, b) => E.tierRank(E.tierOf(b.meta)) - E.tierRank(E.tierOf(a.meta)) || b.price - a.price,
       };
       list.sort(sorts[colPrefs.sort]);
       grid.innerHTML = '';
       if (!list.length) grid.append(h('p', { class: 'muted center span-all' }, 'No cards match.'));
       list.slice(0, colPrefs.limit).forEach((e, i) => {
-        const tier = E.tierOf(e.meta.r);
+        const tier = E.tierOf(e.meta);
         const card = C.cardEl(e.meta, { variant: e.v, tier, interactive: true });
         grid.append(
           h(
@@ -863,7 +863,7 @@
     const cols = h('div', { class: 'profile-cols' });
     v.append(cols);
     if (best) {
-      const card = C.cardEl({ n: best.name, img: best.img, big: best.big, r: best.r }, { variant: best.v, big: true, interactive: true, auto: true });
+      const card = C.cardEl({ n: best.name, img: best.img, big: best.big, r: best.r }, { variant: best.v, tier: best.tier, big: true, interactive: true, auto: true });
       cols.append(
         h(
           'section',
@@ -891,9 +891,6 @@
       );
     }
 
-    const settings = API.settings();
-    const keyInput = h('input', { class: 'input', type: 'password', placeholder: 'Optional', value: settings.apiKey || '', autocomplete: 'off' });
-    const baseInput = h('input', { class: 'input', placeholder: API.DEFAULT_BASE, value: settings.apiBase || '' });
     const fileInput = h('input', {
       type: 'file',
       accept: 'application/json',
@@ -915,46 +912,7 @@
       h(
         'div',
         { class: 'settings' },
-        h(
-          'section',
-          { class: 'panel' },
-          h('h3', null, 'Card data'),
-          h('p', { class: 'muted small' }, 'Cards, images and prices come from the free pokemontcg.io API. A free key from dev.pokemontcg.io raises the rate limit.'),
-          h('label', { class: 'field' }, h('span', null, 'API key'), keyInput),
-          h('label', { class: 'field' }, h('span', null, 'API base URL'), baseInput),
-          h(
-            'div',
-            { class: 'row wrap' },
-            h(
-              'button',
-              {
-                class: 'btn btn--primary',
-                onclick: () => {
-                  API.saveSettings({ apiKey: keyInput.value.trim(), apiBase: baseInput.value.trim() });
-                  toast('Settings saved', 'good');
-                },
-              },
-              'Save'
-            ),
-            h(
-              'button',
-              {
-                class: 'btn',
-                onclick: async (e) => {
-                  const b = e.currentTarget;
-                  b.disabled = true;
-                  const n = await refreshPrices(0);
-                  b.disabled = false;
-                  toast(n == null ? 'Price refresh failed, try again later.' : `Refreshed prices for ${n} cards`, n == null ? 'bad' : 'good');
-                  render();
-                },
-              },
-              ui.icon('refresh'),
-              'Refresh my prices'
-            ),
-            h('button', { class: 'btn btn--ghost', onclick: () => (API.clearCache(), modelCache.clear(), toast('Card data cache cleared')) }, 'Clear cache')
-          )
-        ),
+        cardDataPanel(),
         h(
           'section',
           { class: 'panel' },
@@ -986,18 +944,147 @@
         ),
         h(
           'section',
-          { class: 'panel span-2' },
+          { class: 'panel' },
           h('h3', null, 'How it works'),
           h(
             'ul',
             { class: 'how' },
             h('li', null, `You earn $${G.INCOME} every hour, even while away (up to ${G.CAP_HOURS} hours banked).`),
-            h('li', null, `The shop always stocks the newest set, plus 12 rotating packs from across the game’s history and a mystery pack. The rotation changes every 12 hours (midnight and noon UTC). Bundles of ${E.BUNDLE_SIZE} save ${Math.round(E.BUNDLE_DISCOUNT * 100)}%.`),
+            h('li', null, `The shop always stocks the newest set, plus 13 rotating packs from across the game’s history (one of them a Black Star promo pack) and a mystery pack. The rotation changes every 12 hours (midnight and noon UTC). Bundles of ${E.BUNDLE_SIZE} save ${Math.round(E.BUNDLE_DISCOUNT * 100)}%.`),
             h('li', null, 'Card values are real TCGplayer market prices for that exact printing (normal, holo, reverse holo). Selling pays that market price.'),
             h('li', null, 'Pack price = (expected value of its cards × 1.2 + $1) × sealed age premium (1 + 0.004 × years^2.6), rounded and kept between $1 and $500.'),
-            h('li', null, 'Pull rates approximate each era: 11-card WOTC packs with 1-in-3 holos, 10-card modern packs with a reverse holo slot, Scarlet & Violet packs with an extra illustration-rare slot, and 4-card packs for small special sets.')
+            h('li', null, 'Pull rates approximate each era: 11-card WOTC packs with 1-in-3 holos, 10-card modern packs with a reverse holo slot, Scarlet & Violet packs with an extra illustration-rare slot, 4-card packs for small special sets, and 3-card promo packs. Promo cards are ranked by market value, so a valuable promo still gets a rare reveal.')
           )
         )
+      )
+    );
+  }
+
+  function cardDataPanel() {
+    const s = API.settings();
+    const sunset = new Date(API.LEGACY_SUNSET).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' });
+    const input = (value, attrs = {}) => h('input', { class: 'input', value: value || '', autocomplete: 'off', spellcheck: 'false', ...attrs });
+    const field = (label, el) => h('label', { class: 'field' }, h('span', null, label), el);
+    const source = h(
+      'select',
+      { class: 'input' },
+      [
+        ['auto', 'Automatic: free API first, Scrydex as backup'],
+        ['pokemontcg', 'Pokémon TCG API only'],
+        ['scrydex', 'Scrydex only'],
+      ].map(([val, label]) => h('option', { value: val, selected: (s.source || 'auto') === val }, label))
+    );
+    const legacyKey = input(s.apiKey, { type: 'password', placeholder: 'Optional' });
+    const legacyBase = input(s.apiBase, { placeholder: API.DEFAULT_BASE });
+    const sxProxy = input(s.scrydexProxy, { placeholder: 'http://localhost:8787/scrydex' });
+    const sxKey = input(s.scrydexKey, { type: 'password', placeholder: 'Scrydex API key' });
+    const sxTeam = input(s.scrydexTeam, { placeholder: 'Scrydex team ID' });
+    const statusEl = h('div', { class: 'source-status' }, 'Checking…');
+    const tests = h('div', { class: 'source-tests' });
+
+    const refreshStatus = async () => {
+      const st = await API.status();
+      const using = st.lastSource ? API.SOURCE_LABEL[st.lastSource] : st.mode === 'scrydex' ? 'Scrydex' : 'Pokémon TCG API';
+      const sx = st.scrydex === 'proxy' ? 'connected through the Pack Rush server (key kept off this browser)' : st.scrydex === 'direct' ? 'set up with a key in this browser' : 'not set up';
+      statusEl.replaceChildren(h('div', null, h('span', null, 'Loading cards from'), h('b', null, using)), h('div', null, h('span', null, 'Scrydex'), h('b', { class: st.scrydex ? 'good' : '' }, sx)));
+    };
+    refreshStatus();
+
+    const save = () => {
+      API.saveSettings({
+        source: source.value,
+        apiKey: legacyKey.value.trim(),
+        apiBase: legacyBase.value.trim(),
+        scrydexProxy: sxProxy.value.trim(),
+        scrydexKey: sxKey.value.trim(),
+        scrydexTeam: sxTeam.value.trim(),
+      });
+      modelCache.clear();
+      toast('Card data settings saved', 'good');
+      refreshStatus();
+    };
+
+    const test = async (e) => {
+      const b = e.currentTarget;
+      b.disabled = true;
+      save();
+      tests.replaceChildren(loading('Testing connections…'));
+      const r = await API.testSources();
+      b.disabled = false;
+      tests.replaceChildren(
+        ...Object.entries(r).map(([name, res]) =>
+          h('div', { class: 'source-test ' + (res.ok ? 'is-ok' : 'is-bad') }, h('b', null, API.SOURCE_LABEL[name]), h('span', null, res.ok ? 'Working' : res.error))
+        )
+      );
+    };
+
+    return h(
+      'section',
+      { class: 'panel span-2' },
+      h('h3', null, 'Card data'),
+      h(
+        'div',
+        { class: 'notice' },
+        ui.icon('info'),
+        h(
+          'div',
+          null,
+          h('b', null, `The free Pokémon TCG API shuts down on ${sunset}.`),
+          h('p', null, 'After that, cards come from Scrydex, its official paid successor (plans start at $29/month). In automatic mode the game switches over by itself as soon as Scrydex is set up, and uses it as a backup whenever the free API is down.')
+        )
+      ),
+      statusEl,
+      field('Source', source),
+      h(
+        'div',
+        { class: 'source-grid' },
+        h(
+          'div',
+          null,
+          h('h4', null, 'Pokémon TCG API · free'),
+          h('p', { class: 'muted small' }, 'A free key from dev.pokemontcg.io raises the rate limit.'),
+          field('API key', legacyKey),
+          field('Base URL', legacyBase)
+        ),
+        h(
+          'div',
+          null,
+          h('h4', null, 'Scrydex · paid'),
+          h('p', { class: 'muted small' }, 'Recommended: start the bundled server with your Scrydex credentials (see the README). It keeps the key private, caches responses to save credits, and the game finds it automatically when you open it from that server.'),
+          field('Server URL (only if the game is hosted somewhere else)', sxProxy),
+          h(
+            'details',
+            { class: 'adv' },
+            h('summary', null, 'Or use a key directly in this browser'),
+            h('p', { class: 'muted small' }, 'The key is saved in this browser and sent from it. Scrydex advises against putting keys in web pages, and its API may refuse requests made straight from a browser. The server is the reliable option.'),
+            field('API key', sxKey),
+            field('Team ID', sxTeam)
+          )
+        )
+      ),
+      tests,
+      h(
+        'div',
+        { class: 'row wrap' },
+        h('button', { class: 'btn btn--primary', onclick: save }, 'Save'),
+        h('button', { class: 'btn', onclick: test }, 'Test connections'),
+        h(
+          'button',
+          {
+            class: 'btn',
+            onclick: async (e) => {
+              const b = e.currentTarget;
+              b.disabled = true;
+              const n = await refreshPrices(0);
+              b.disabled = false;
+              toast(n == null ? 'Price refresh failed, try again later.' : `Refreshed prices for ${n} cards`, n == null ? 'bad' : 'good');
+              render();
+            },
+          },
+          ui.icon('refresh'),
+          'Refresh my prices'
+        ),
+        h('button', { class: 'btn btn--ghost', onclick: () => (API.clearCache(), modelCache.clear(), toast('Card data cache cleared')) }, 'Clear cache')
       )
     );
   }

@@ -44,6 +44,7 @@
   function packEl(set, opts = {}) {
     const model = opts.model;
     const mystery = !!opts.mystery;
+    const promo = !mystery && E.isPromo(set);
     const art = !mystery && model && model.art;
     const size = model ? model.size : opts.size;
     const style = `--h:${mystery ? 268 : hueOf(set)}` + (art ? `;--art:url("${String(art).replace(/"/g, '')}")` : '');
@@ -59,14 +60,14 @@
         : h('span', { class: 'pack__logo-text' }, set.name);
     return h(
       'div',
-      { class: 'pack' + (opts.big ? ' pack--big' : '') + (mystery ? ' pack--mystery' : '') + (art ? ' has-art' : ''), style },
+      { class: 'pack' + (opts.big ? ' pack--big' : '') + (mystery ? ' pack--mystery' : '') + (promo ? ' pack--promo' : '') + (art ? ' has-art' : ''), style },
       h('div', { class: 'pack__cap' }),
       h(
         'div',
         { class: 'pack__body' },
         h('div', { class: 'pack__art' }),
         h('div', { class: 'pack__logo' }, logo),
-        h('div', { class: 'pack__band' }, mystery ? 'Mystery Pack' : 'Booster Pack'),
+        h('div', { class: 'pack__band' }, mystery ? 'Mystery Pack' : promo ? '★ Promo Pack ★' : 'Booster Pack'),
         h(
           'div',
           { class: 'pack__foot' },

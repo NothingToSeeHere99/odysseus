@@ -75,12 +75,13 @@ test('pack prices stay within $1-$500 and older sets cost more', () => {
   assert.strictEqual(E.charm(37.2), 37.99);
 });
 
-test('shop: featured newest set plus 12 deterministic rotating packs', () => {
+test('shop: featured newest set plus 13 deterministic rotating packs, one of them promo', () => {
   const sets = [];
   for (let y = 1999; y <= 2025; y++) for (let k = 0; k < 4; k++) sets.push({ id: `s${y}${k}`, name: `Set ${y}-${k}`, series: 'X', date: `${y}/0${k + 1}/15`, total: 100 });
   sets.push({ id: 'mcd21', name: "McDonald's Collection 2021", series: 'Other', date: '2021/02/09', total: 25 });
   sets.push({ id: 'cel25', name: 'Celebrations', series: 'Sword & Shield', date: '2021/10/08', total: 25 });
   sets.push({ id: 'swshp', name: 'SWSH Black Star Promos', series: 'Sword & Shield', date: '2019/11/15', total: 300 });
+  sets.push({ id: 'fut20', name: 'Pokémon Futsal Collection', series: 'Other', date: '2020/09/11', total: 5 });
   sets.push({ id: 'swsh12tg', name: 'Silver Tempest Trainer Gallery', series: 'Sword & Shield', date: '2022/11/11', total: 30 });
   sets.push({ id: 'future', name: 'Not Out Yet', series: 'X', date: '2027/01/01', total: 200 });
   const t = Date.UTC(2026, 9, 8, 3);
@@ -91,9 +92,10 @@ test('shop: featured newest set plus 12 deterministic rotating packs', () => {
   assert.strictEqual(a.featured.id, 's20253');
   assert.deepStrictEqual(ids(a), ids(b));
   assert.notDeepStrictEqual(ids(a), ids(c));
-  assert.strictEqual(a.rotation.length, 12);
-  assert.strictEqual(new Set(ids(a)).size, 12);
-  for (const bad of ['swshp', 'swsh12tg', 'future', 's20253']) assert.ok(!ids(a).includes(bad), bad);
+  assert.strictEqual(a.rotation.length, 13);
+  assert.strictEqual(new Set(ids(a)).size, 13);
+  assert.ok(ids(a).includes('swshp'), 'promo slot');
+  for (const bad of ['fut20', 'swsh12tg', 'future', 's20253']) assert.ok(!ids(a).includes(bad), bad);
   assert.ok(ids(a).filter((id) => Number(id.slice(1, 5)) < 2003).length >= 2);
 });
 
@@ -137,4 +139,22 @@ test('reverse holo price falls back sensibly', () => {
   assert.strictEqual(E.priceOf({ r: 'Common', p: { normal: 0.1, reverseHolofoil: 0.5 } }, 'reverseHolofoil'), 0.5);
   assert.strictEqual(E.priceOf({ r: 'Rare Holo', p: {} }, 'holofoil'), 1);
   assert.strictEqual(E.priceOf({ r: 'Rare', p: {}, cm: 2 }, 'normal'), 2.16);
+});
+
+test('promo packs: 3 cards, ranked by market value', () => {
+  const set = { id: 'svp', name: 'Scarlet & Violet Black Star Promos', series: 'Scarlet & Violet', date: '2023/01/01', total: 6 };
+  const card = (n, price) => ({ id: `svp-${n}`, s: 'svp', n: `Promo ${n}`, no: String(n), r: 'Promo', p: { holofoil: price } });
+  const cards = [card(1, 0.5), card(2, 4), card(3, 12), card(4, 45), card(5, 250), card(6, 1)];
+  assert.strictEqual(E.isPromo(set), true);
+  assert.strictEqual(E.eraOf(set), 'promo');
+  assert.strictEqual(E.bucketOf(set), 'promo');
+  assert.strictEqual(E.isEligible(set, Date.UTC(2026, 0, 1)), true);
+  assert.strictEqual(cards.map((c) => E.tierOf(c)).join(), 'R,RH,DR,UR,SR,R');
+  assert.strictEqual(E.tierOf({ r: 'Rare Holo', p: { holofoil: 500 } }), 'RH');
+  const model = E.packModel(set, cards, Date.UTC(2026, 9, 8));
+  assert.strictEqual(model.size, 3);
+  const pulls = E.openPack(model, U.mulberry32(5));
+  assert.strictEqual(pulls.length, 3);
+  assert.strictEqual(new Set(pulls.map((p) => p.card.id)).size, 3);
+  assert.ok(E.packOdds(model).some((o) => o.tier === 'SR'));
 });
