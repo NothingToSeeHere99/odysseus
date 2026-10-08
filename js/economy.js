@@ -332,6 +332,64 @@
     return normal.concat(special);
   }
 
+  // ---- grading -----------------------------------------------------------
+  //
+  // Modeled on real grading: pack-fresh modern cards often get a 10, vintage rarely.
+  // A graded card's value is its raw price times a multiplier that grows steeply with
+  // grade and age, with a floor (even a common is worth something in a 10 slab).
+
+  const GRADE_NAMES = { 10: 'Gem Mint', 9: 'Mint', 8: 'NM-Mint', 7: 'Near Mint', 6: 'EX-MT', 5: 'Excellent', 4: 'VG-EX', 3: 'Very Good', 2: 'Good', 1: 'Poor' };
+  const GRADE_ODDS = {
+    modern: { 10: 0.3, 9: 0.42, 8: 0.16, 7: 0.06, 6: 0.03, 5: 0.015, 4: 0.008, 3: 0.004, 2: 0.002, 1: 0.001 },
+    classic: { 10: 0.12, 9: 0.34, 8: 0.28, 7: 0.13, 6: 0.06, 5: 0.035, 4: 0.017, 3: 0.01, 2: 0.005, 1: 0.003 },
+    vintage: { 10: 0.03, 9: 0.14, 8: 0.29, 7: 0.25, 6: 0.13, 5: 0.08, 4: 0.04, 3: 0.025, 2: 0.01, 1: 0.005 },
+  };
+  const GRADE_MULT = {
+    modern: { 10: 2.5, 9: 1.1, 8: 0.85, 7: 0.75, 6: 0.65, 5: 0.55, 4: 0.45, 3: 0.4, 2: 0.35, 1: 0.3 },
+    classic: { 10: 5, 9: 1.7, 8: 1.1, 7: 0.85, 6: 0.75, 5: 0.6, 4: 0.5, 3: 0.42, 2: 0.36, 1: 0.3 },
+    vintage: { 10: 12, 9: 3, 8: 1.5, 7: 1.1, 6: 0.85, 5: 0.8, 4: 0.65, 3: 0.55, 2: 0.45, 1: 0.35 },
+  };
+  const SLAB_FLOOR = { 10: 18, 9: 9, 8: 6, 7: 5, 6: 4, 5: 4, 4: 3, 3: 3, 2: 3, 1: 3 };
+  const ERA_LABEL = { modern: 'Modern (2017+)', classic: 'Classic (2003–2016)', vintage: 'Vintage (1999–2002)' };
+  const GRADING = {
+    standard: { label: 'Standard', ms: PP.HOUR, mult: 1 },
+    express: { label: 'Express', ms: 5 * 60 * 1000, mult: 3 },
+  };
+
+  function gradeEra(date) {
+    if (!date) return 'modern';
+    const y = U.yearOf(date);
+    return y < 2003 ? 'vintage' : y < 2017 ? 'classic' : 'modern';
+  }
+
+  // Priced by declared value, like real grading tiers.
+  function gradingFee(rawValue, speed = 'standard') {
+    const base = rawValue < 100 ? 15 : rawValue < 500 ? 30 : rawValue < 1500 ? 75 : rawValue < 5000 ? 150 : 300;
+    return base * (GRADING[speed] || GRADING.standard).mult;
+  }
+
+  function rollGrade(era, rng = Math.random) {
+    return Number(U.pickWeighted(rng, Object.entries(GRADE_ODDS[era] || GRADE_ODDS.modern).map(([g, w]) => [g, w])));
+  }
+
+  // Real graded sale prices (from Scrydex, when available) win over the estimate.
+  function gradedPrice(card, variant, grade, era) {
+    const real = card.g && card.g[grade];
+    if (real) return U.round2(real);
+    const mult = (GRADE_MULT[era] || GRADE_MULT.modern)[grade];
+    return U.round2(Math.max(SLAB_FLOOR[grade], priceOf(card, variant) * mult));
+  }
+
+  function gradeOdds(card, variant, era) {
+    return Object.entries(GRADE_ODDS[era] || GRADE_ODDS.modern)
+      .map(([g, p]) => ({ grade: Number(g), p, value: gradedPrice(card, variant, Number(g), era) }))
+      .sort((a, b) => b.grade - a.grade);
+  }
+
+  function gradedEV(card, variant, era) {
+    return U.round2(gradeOdds(card, variant, era).reduce((s, o) => s + o.p * o.value, 0));
+  }
+
   // ---- shop --------------------------------------------------------------
 
   const EXCLUDE = /trainer gallery|galarian gallery|shiny vault|futsal|trainer kit|energies|classic collection/i;
@@ -423,6 +481,16 @@
     featuredSet,
     shopSets,
     mysteryPrice,
+    GRADE_NAMES,
+    GRADE_ODDS,
+    ERA_LABEL,
+    GRADING,
+    gradeEra,
+    gradingFee,
+    rollGrade,
+    gradedPrice,
+    gradeOdds,
+    gradedEV,
     rotationIndex,
     rotationEndsAt,
   };

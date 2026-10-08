@@ -29,6 +29,18 @@ Progress is saved in the browser's local storage. To move it to another device, 
 - **Selling:** you can sell any card for its current market price from the pack results, the binder or the collection. You can also bulk-sell duplicates or every card under a price you choose.
 - **Binder:** a page-by-page binder for every set you own cards from. It shows the empty slots you still need and how complete each set is.
 
+### Grading
+
+Open any card in your collection and press **Grade** to send one copy to Pack Rush Grading (PRG), the game's stand-in for a real grading company:
+
+- **Fee** by the card's value, like real tiers: under $100 → $15, under $500 → $30, under $1,500 → $75, under $5,000 → $150, otherwise $300. **Standard** takes 1 hour; **Express** costs 3× and takes 5 minutes.
+- **Grades 1–10.** Odds depend on the card's age, modeled on real population reports: about 30% of modern cards (2017+) get a 10, about 12% of 2003–2016 cards, and about 3% of vintage (1999–2002). The grade is decided when you send the card, so reloading can't change it.
+- **Value** is the raw price × a multiplier for the grade (for example ×2.5 for a modern 10, ×12 for a vintage 10, about ×0.85 for an 8), with a small minimum because even a common in a slab has some value. If Scrydex supplies real PSA sale prices for that grade, those are used instead.
+- When it's back, the Collection tab shows a badge; reveal the grade from the **At the grader** panel.
+- Graded cards sit in slabs and are never touched by bulk selling. **Crack** a slab to get the raw card back, for example to try for a better grade.
+
+Grading cheap cards loses money on average. Grading a valuable modern card expects a modest profit, and vintage cards are a long shot at a big payoff.
+
 ### Pack contents
 
 | Era | Cards | Slots |

@@ -76,12 +76,23 @@
     document.querySelectorAll('[data-afford]').forEach((el) => (el.disabled = money < Number(el.dataset.afford)));
   }
 
+  const notifiedGrades = new Set();
+
   function tick() {
     const now = Date.now();
     const gained = G.accrue(now);
     if (gained) {
       toast(`+${U.money(gained)} income collected`, 'good');
       sfx.coin();
+    }
+    const ready = G.gradingJobs().filter((j) => j.ready <= now);
+    const colTab = document.querySelector('#tabs [data-view=collection]');
+    if (colTab) colTab.dataset.badge = ready.length ? String(ready.length) : '';
+    const fresh = ready.filter((j) => !notifiedGrades.has(j.uid));
+    if (fresh.length) {
+      fresh.forEach((j) => notifiedGrades.add(j.uid));
+      toast(`${fresh.length > 1 ? `${fresh.length} cards are` : 'A card is'} back from the grader! Open your Collection to reveal.`, 'good');
+      if (currentRoute().name === 'collection' && !document.body.classList.contains('no-scroll') && !document.body.classList.contains('modal-open')) render();
     }
     const left = G.nextIncomeIn(now);
     document.getElementById('incomeText').textContent = U.fmtDuration(left);
@@ -594,7 +605,14 @@
       const best = mine.sort((a, b) => b.price - a.price)[0];
       const n = mine.reduce((s, e) => s + e.n, 0);
       const card = C.cardEl(c, { variant: best.v, tier: E.tierOf(c), interactive: true });
-      return h('button', { class: 'pocket is-owned', onclick: () => showCard(c.id) }, card, n > 1 ? h('span', { class: 'count' }, `×${n}`) : null);
+      const bestGrade = Math.max(0, ...mine.map((e) => e.g || 0));
+      return h(
+        'button',
+        { class: 'pocket is-owned', onclick: () => showCard(c.id) },
+        card,
+        n > 1 ? h('span', { class: 'count' }, `×${n}`) : null,
+        bestGrade ? h('span', { class: 'grade-badge' + (bestGrade === 10 ? ' is-gem' : '') }, `PRG ${bestGrade}`) : null
+      );
     };
 
     const draw = () => {
@@ -637,18 +655,30 @@
     if (!copies.length) return closeModal();
     const meta = copies[0].meta;
     const tier = E.tierOf(meta);
-    const card = C.cardEl(meta, { variant: copies[0].v, tier, big: true, eager: true, interactive: true, auto: true });
-    C.upgrade(card);
+    let card;
+    if (copies[0].g) card = PP.grading.slabEl(meta, copies[0], { big: true, eager: true, interactive: true, auto: true, cert: (copies[0].certs || [])[0] });
+    else {
+      card = C.cardEl(meta, { variant: copies[0].v, tier, big: true, eager: true, interactive: true, auto: true });
+      C.upgrade(card);
+    }
     const rows = copies.map((e) =>
       h(
         'div',
-        { class: 'variant-row' },
-        h('div', null, h('b', null, E.variantLabel(e.v)), h('div', { class: 'muted small' }, `Owned ×${e.n} · ${U.money(e.price)} each`)),
+        { class: 'variant-row' + (e.g ? ' is-graded' : '') },
         h(
           'div',
-          { class: 'row' },
+          null,
+          h('b', null, e.g ? `PRG ${e.g} ${E.GRADE_NAMES[e.g]}` : E.variantLabel(e.v)),
+          h('div', { class: 'muted small' }, `${e.g ? E.variantLabel(e.v) + ' · ' : ''}Owned ×${e.n} · ${U.money(e.price)} each`)
+        ),
+        h(
+          'div',
+          { class: 'row wrap' },
           h('button', { class: 'btn btn--sm btn--sell', onclick: () => sellAndRefresh(id, e.key, 1) }, ui.icon('tag'), `Sell 1`),
-          e.n > 1 ? h('button', { class: 'btn btn--sm', onclick: () => sellAndRefresh(id, e.key, e.n) }, `Sell all · ${U.money(e.price * e.n)}`) : null
+          e.g
+            ? h('button', { class: 'btn btn--sm', title: 'Take the card out of its slab', onclick: () => crackAndRefresh(id, e.key) }, 'Crack')
+            : h('button', { class: 'btn btn--sm', onclick: () => PP.grading.gradeDialog(e, afterGradingChange) }, ui.icon('sparkle'), 'Grade'),
+          !e.g && e.n > 1 ? h('button', { class: 'btn btn--sm', onclick: () => sellAndRefresh(id, e.key, e.n) }, `Sell all · ${U.money(e.price * e.n)}`) : null
         )
       )
     );
@@ -664,7 +694,7 @@
           h('div', { class: 'showcase__set' }, `${(API.peekSets().find((x) => x.id === meta.s) || { name: meta.s }).name} · #${meta.no}`),
           h('h2', null, meta.n),
           h('div', { class: 'row wrap' }, ui.rarityEl(tier), meta.r && meta.r !== E.TIER_LABEL[tier] ? ui.chip(meta.r) : null),
-          h('div', { class: 'showcase__value' }, h('span', null, 'Market value'), h('b', null, U.money(copies[0].price))),
+          h('div', { class: 'showcase__value' }, h('span', null, copies[0].g ? (meta.g && meta.g[copies[0].g] ? `PSA ${copies[0].g} sales` : `Estimated value at grade ${copies[0].g}`) : 'Market value'), h('b', null, U.money(copies[0].price))),
           rows,
           copies.length > 1 || copies[0].n > 1 ? h('div', { class: 'kv' }, h('span', null, 'All copies'), h('b', null, U.money(total))) : null,
           h('p', { class: 'muted small' }, `TCGplayer market prices via pokemontcg.io · updated ${new Date(meta.t || Date.now()).toLocaleDateString()}`)
@@ -672,6 +702,21 @@
       ),
       { dark: true, wide: true, cls: `tier-${tier}` }
     );
+  }
+
+  function crackAndRefresh(id, key) {
+    confirmBox('Crack the slab?', 'The card comes back out as a raw copy and loses its grade. You can send it for grading again later.', 'Crack it', () => {
+      G.crack(key);
+      sfx.swoosh();
+      toast('Slab cracked. The card is raw again.');
+      showCard(id);
+      afterGradingChange();
+    });
+  }
+
+  function afterGradingChange() {
+    if (currentRoute().name === 'binder' && redrawBinder) redrawBinder();
+    if (currentRoute().name === 'collection') render();
   }
 
   function sellAndRefresh(id, key, qty) {
@@ -695,6 +740,7 @@
     ['IR', 'Illustration+'],
     ['UR', 'Ultra+'],
     ['SR', 'Secret'],
+    ['graded', 'Graded'],
   ];
 
   function renderCollection(v) {
@@ -713,8 +759,10 @@
         )
       )
     );
+    const panel = PP.grading.gradingPanel(render);
+    if (panel) v.append(panel);
     if (!all.length) {
-      v.append(emptyState('No cards yet', 'Head to the shop and open your first pack.'));
+      if (!panel) v.append(emptyState('No cards yet', 'Head to the shop and open your first pack.'));
       return;
     }
 
@@ -794,8 +842,9 @@
 
     const draw = () => {
       const q = colPrefs.q.trim().toLowerCase();
-      const min = colPrefs.tier === 'all' ? -1 : E.tierRank(colPrefs.tier);
-      const list = G.entries().filter((e) => e.meta && (!q || e.meta.n.toLowerCase().includes(q)) && E.tierRank(E.tierOf(e.meta)) >= min);
+      const gradedOnly = colPrefs.tier === 'graded';
+      const min = colPrefs.tier === 'all' || gradedOnly ? -1 : E.tierRank(colPrefs.tier);
+      const list = G.entries().filter((e) => e.meta && (!q || e.meta.n.toLowerCase().includes(q)) && E.tierRank(E.tierOf(e.meta)) >= min && (!gradedOnly || e.g));
       const sorts = {
         value: (a, b) => b.price - a.price,
         recent: (a, b) => (b.at || 0) - (a.at || 0),
@@ -807,14 +856,14 @@
       if (!list.length) grid.append(h('p', { class: 'muted center span-all' }, 'No cards match.'));
       list.slice(0, colPrefs.limit).forEach((e, i) => {
         const tier = E.tierOf(e.meta);
-        const card = C.cardEl(e.meta, { variant: e.v, tier, interactive: true });
+        const card = e.g ? PP.grading.slabEl(e.meta, e, { small: true, interactive: true }) : C.cardEl(e.meta, { variant: e.v, tier, interactive: true });
         grid.append(
           h(
             'div',
-            { class: `ctile tier-${tier}`, style: `--d:${Math.min(i, 24) * 20}ms` },
+            { class: `ctile tier-${tier}` + (e.g ? ' is-graded' : ''), style: `--d:${Math.min(i, 24) * 20}ms` },
             h('button', { class: 'ctile__card', onclick: () => showCard(e.id), 'aria-label': e.meta.n }, card, e.n > 1 ? h('span', { class: 'count' }, `×${e.n}`) : null),
             h('div', { class: 'ctile__name', title: e.meta.n }, e.meta.n),
-            h('div', { class: 'ctile__meta' }, [ui.rarityEl(tier, { short: true }), ui.variantChip(e.v)].filter(Boolean)),
+            h('div', { class: 'ctile__meta' }, [ui.rarityEl(tier, { short: true }), e.g ? ui.chip(`PRG ${e.g}`, e.g === 10 ? 'chip--gold' : 'chip--foil') : null, ui.variantChip(e.v)].filter(Boolean)),
             h(
               'button',
               {
@@ -855,7 +904,7 @@
         stat('gift', 'Packs opened', s.packs.toLocaleString()),
         stat('shop', 'Spent on packs', U.money(s.spent)),
         stat('tag', 'Earned from sales', U.money(s.earned)),
-        stat('chart', 'Cards sold', s.sold.toLocaleString()),
+        stat('chart', 'Cards graded', (s.graded || 0).toLocaleString()),
         stat('sparkle', 'Unique cards', new Set(G.entries().map((e) => e.id)).size.toLocaleString()),
         stat('clock', 'Income collected', U.money(s.income))
       )
@@ -1165,7 +1214,7 @@
     setTimeout(() => refreshPrices(), 4000);
   }
 
-  Object.assign(ui, { toast, render, showCard, closeModal });
+  Object.assign(ui, { toast, render, showCard, closeModal, openModal });
   if (typeof document !== 'undefined') {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
     else boot();

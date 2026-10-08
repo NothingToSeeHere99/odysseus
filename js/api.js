@@ -127,11 +127,12 @@
     const out = { id: c.id, p: c.p || {} };
     if (c.cm) out.cm = c.cm;
     if (c.cmr) out.cmr = c.cmr;
+    if (c.g) out.g = c.g;
     return out;
   };
 
   function splitCards(cards, t) {
-    const catalog = cards.map(({ p, cm, cmr, ...rest }) => rest);
+    const catalog = cards.map(({ p, cm, cmr, g, ...rest }) => rest);
     const prices = {};
     for (const c of cards) prices[c.id] = { ...priceOnly(c), t };
     return { catalog, prices };
@@ -144,6 +145,7 @@
       const out = { ...c, p: e.p || {} };
       if (e.cm) out.cm = e.cm;
       if (e.cmr) out.cmr = e.cmr;
+      if (e.g) out.g = e.g;
       return out;
     });
   }
@@ -353,11 +355,20 @@
     const variants = c.variants || [];
     const img = pickImages(c.images) || variants.map((v) => pickImages(v.images)).find(Boolean) || {};
     const p = {};
+    const g = {};
     for (const v of variants) {
       const price = variantPrice(v);
       if (price != null) p[variantKey(v.name)] = price;
+      // Real PSA sale prices by grade (Scrydex's higher plans), used for slab values.
+      for (const x of v.prices || []) {
+        const grade = Number(x.grade);
+        const value = x.market ?? x.mid ?? x.low;
+        if (x.type === 'graded' && /psa/i.test(x.company || '') && grade >= 1 && grade <= 10 && value > 0 && (!x.currency || x.currency === 'USD') && !g[grade]) g[grade] = U.round2(value);
+      }
     }
+    const graded = Object.keys(g).length ? { g } : {};
     return {
+      ...graded,
       id: c.id,
       s: (c.expansion && c.expansion.id) || c.id.slice(0, c.id.lastIndexOf('-')),
       n: c.name,

@@ -63,7 +63,7 @@ test('Scrydex cards convert to the same shape as legacy cards', () => {
       { name: 'firstEditionHolofoil', prices: [{ condition: 'NM', type: 'raw', market: 300, currency: 'USD' }] },
     ],
   });
-  assert.strictEqual(JSON.stringify(c), JSON.stringify({ id: 'sv3pt5-199', s: 'sv3pt5', n: 'Charizard ex', no: '199', r: 'Special Illustration Rare', st: 'Pokémon', img: 'https://img/s.png', big: 'https://img/l.png', p: { holofoil: 120.46, reverseHolofoil: 5, '1stEditionHolofoil': 300 } }));
+  assert.strictEqual(JSON.stringify(c), JSON.stringify({ g: { 10: 900 }, id: 'sv3pt5-199', s: 'sv3pt5', n: 'Charizard ex', no: '199', r: 'Special Illustration Rare', st: 'Pokémon', img: 'https://img/s.png', big: 'https://img/l.png', p: { holofoil: 120.46, reverseHolofoil: 5, '1stEditionHolofoil': 300 } }));
   const set = PP.api.scrydexSet({ id: 'me2', name: 'Phantasmal Flames', series: 'Mega Evolution', total: 130, printed_total: 94, release_date: '2025/11/14', logo: 'L', symbol: 'S' });
   assert.strictEqual(JSON.stringify(set), JSON.stringify({ id: 'me2', name: 'Phantasmal Flames', series: 'Mega Evolution', total: 130, printed: 94, date: '2025/11/14', logo: 'L', symbol: 'S' }));
   assert.strictEqual(PP.api.variantKey('Normal'), 'normal');

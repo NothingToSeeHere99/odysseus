@@ -17,9 +17,10 @@
       v: 1,
       money: START_MONEY,
       anchor: Date.now(),
-      cards: {}, // "cardId|variant" -> { id, v, n, at }
+      cards: {}, // "cardId|variant" (raw) or "cardId|variant|gN" (graded) -> { id, v, n, at, g?, era? }
       meta: {}, // cardId -> compact card (name, images, prices) + t (price timestamp)
-      stats: { packs: 0, spent: 0, sold: 0, earned: 0, income: 0, best: null },
+      stats: { packs: 0, spent: 0, sold: 0, earned: 0, income: 0, best: null, graded: 0, gradingSpent: 0, bestGrade: null },
+      grading: [], // cards at the grader: { uid, id, v, era, speed, fee, sent, ready, grade, cert }
       log: [],
     };
   }
@@ -70,13 +71,14 @@
 
   function owns(id) {
     for (const e of Object.values(state.cards)) if (e.id === id) return true;
-    return false;
+    return (state.grading || []).some((j) => j.id === id);
   }
 
   function unitPrice(key) {
     const e = state.cards[key];
     const m = e && state.meta[e.id];
-    return m ? E.priceOf(m, e.v) : 0;
+    if (!m) return 0;
+    return e.g ? E.gradedPrice(m, e.v, e.g, e.era) : E.priceOf(m, e.v);
   }
 
   function entries() {
@@ -184,7 +186,7 @@
   // Keep one copy of every card (preferring the most valuable printing), sell the rest.
   function duplicateItems() {
     const byId = {};
-    for (const e of entries()) (byId[e.id] = byId[e.id] || []).push(e);
+    for (const e of entries()) if (!e.g) (byId[e.id] = byId[e.id] || []).push(e); // slabs are never bulk-sold
     const items = [];
     for (const list of Object.values(byId)) {
       list.sort((a, b) => b.price - a.price);
@@ -198,12 +200,86 @@
 
   function cheapItems(maxPrice) {
     return entries()
-      .filter((e) => e.price < maxPrice)
+      .filter((e) => !e.g && e.price < maxPrice)
       .map((e) => [e.key, e.n]);
   }
 
   function itemsValue(items) {
     return U.round2(items.reduce((s, [key, qty]) => s + unitPrice(key) * qty, 0));
+  }
+
+  // ---- grading -----------------------------------------------------------
+
+  // Send one raw copy to the grader. The grade is decided now (so reloading can't
+  // re-roll it) and revealed once the turnaround time has passed.
+  function sendToGrade(key, speed = 'standard', era = 'modern') {
+    const e = state.cards[key];
+    if (!e || e.g) throw new Error('Only raw cards can be graded.');
+    const fee = E.gradingFee(unitPrice(key), speed);
+    if (state.money < fee) throw new Error(`You need ${U.money(fee - state.money)} more.`);
+    const now = Date.now();
+    state.money = U.round2(state.money - fee);
+    e.n -= 1;
+    if (e.n <= 0) delete state.cards[key];
+    const job = {
+      uid: now.toString(36) + Math.random().toString(36).slice(2, 7),
+      id: e.id,
+      v: e.v,
+      era,
+      speed,
+      fee,
+      sent: now,
+      ready: now + E.GRADING[speed].ms,
+      grade: E.rollGrade(era),
+      cert: String(Math.floor(1e7 + Math.random() * 9e7)),
+    };
+    state.grading.push(job);
+    state.stats.gradingSpent = U.round2((state.stats.gradingSpent || 0) + fee);
+    save();
+    emit();
+    return job;
+  }
+
+  function gradingJobs() {
+    return (state.grading || []).slice().sort((a, b) => a.ready - b.ready);
+  }
+
+  // Collect a finished card: it goes into the collection as a slab.
+  function revealGrade(uid, now = Date.now()) {
+    const i = state.grading.findIndex((j) => j.uid === uid);
+    if (i < 0) throw new Error('Not at the grader.');
+    const job = state.grading[i];
+    if (now < job.ready) throw new Error('Still being graded.');
+    state.grading.splice(i, 1);
+    const key = `${job.id}|${job.v}|g${job.grade}`;
+    const e = (state.cards[key] = state.cards[key] || { id: job.id, v: job.v, g: job.grade, era: job.era, n: 0, certs: [], at: now });
+    e.n += 1;
+    e.at = now;
+    e.certs = [...(e.certs || []), job.cert];
+    state.stats.graded = (state.stats.graded || 0) + 1;
+    const price = unitPrice(key);
+    const m = state.meta[job.id];
+    if (!state.stats.bestGrade || job.grade > state.stats.bestGrade.grade || (job.grade === state.stats.bestGrade.grade && price > state.stats.bestGrade.price)) {
+      state.stats.bestGrade = { id: job.id, name: m ? m.n : job.id, grade: job.grade, price };
+    }
+    save();
+    emit();
+    return { ...job, key, price };
+  }
+
+  // Break a slab open: the card goes back to being a raw copy.
+  function crack(key) {
+    const e = state.cards[key];
+    if (!e || !e.g) throw new Error('Not a graded card.');
+    e.n -= 1;
+    if (e.certs) e.certs.pop();
+    if (e.n <= 0) delete state.cards[key];
+    const rawKey = keyOf(e.id, e.v);
+    const raw = (state.cards[rawKey] = state.cards[rawKey] || { id: e.id, v: e.v, n: 0, at: Date.now() });
+    raw.n += 1;
+    save();
+    emit();
+    return rawKey;
   }
 
   // ---- prices ------------------------------------------------------------
@@ -273,6 +349,10 @@
     setSummary,
     copiesOf,
     purchase,
+    sendToGrade,
+    gradingJobs,
+    revealGrade,
+    crack,
     sell,
     sellMany,
     duplicateItems,

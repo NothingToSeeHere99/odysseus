@@ -724,6 +724,85 @@ select.input { padding-right: 34px; appearance: none; background: var(--surface)
 .how { padding-left: 20px; color: var(--ink-2); display: grid; gap: 8px; margin: 0; }
 
 /* =========================================================================
+   Grading
+   ========================================================================= */
+
+.slab {
+  position: relative; display: flex; flex-direction: column; gap: 5%; padding: 6% 6.5% 7%;
+  border-radius: 12px / 9px; aspect-ratio: 245 / 430;
+  background:
+    linear-gradient(115deg, rgba(255, 255, 255, 0.55) 0%, rgba(255, 255, 255, 0) 22%, rgba(255, 255, 255, 0) 70%, rgba(255, 255, 255, 0.35) 100%),
+    linear-gradient(180deg, rgba(232, 238, 248, 0.92), rgba(205, 214, 230, 0.88));
+  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.9), inset 0 0 0 3px rgba(150, 165, 195, 0.45), 0 14px 28px -14px rgba(10, 16, 40, 0.55), 0 2px 4px rgba(10, 16, 40, 0.2);
+}
+.slab__label {
+  display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 6px;
+  background: linear-gradient(180deg, #ffffff, #f2f4f9); border: 2px solid #c8102e; box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.05);
+  color: #1a1a1a; font-size: 10px; line-height: 1.15; min-height: 0;
+}
+.slab__brand { display: grid; text-align: center; }
+.slab__brand b { font-size: 13px; font-weight: 900; color: #c8102e; letter-spacing: 0.04em; }
+.slab__brand span { font-size: 7px; font-weight: 700; color: #6b7280; white-space: nowrap; }
+.slab__info { display: grid; min-width: 0; }
+.slab__info b, .slab__info span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.slab__info b { font-size: 11px; font-weight: 900; }
+.slab__info span { font-size: 8.5px; color: #4b5563; font-weight: 700; }
+.slab__grade { display: grid; text-align: center; min-width: 38px; }
+.slab__grade b { font-size: 22px; font-weight: 900; line-height: 1; }
+.slab__grade span { font-size: 7.5px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; color: #4b5563; }
+.slab--gem .slab__label { border-color: #c9971c; background: linear-gradient(180deg, #fffdf3, #fff3c9); }
+.slab--gem .slab__grade b { background: linear-gradient(180deg, #e8b62a, #9a6b00); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.slab.is-sealed .slab__grade b { color: #9aa3bf; animation: pulse 1.2s infinite; }
+.slab__window { position: relative; flex: 1; display: grid; place-items: center; border-radius: 6px; padding: 4%; background: rgba(255, 255, 255, 0.25); box-shadow: inset 0 2px 8px rgba(30, 40, 70, 0.25); }
+.slab__window .pcard { width: 100%; }
+.slab::after { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background: linear-gradient(105deg, transparent 35%, rgba(255, 255, 255, 0.45) 45%, transparent 55%); mix-blend-mode: soft-light; }
+.slab--small .slab__label { padding: 4px 5px; gap: 4px; border-width: 1.5px; }
+.slab--small .slab__brand span, .slab--small .slab__info span:last-child, .slab--small .slab__grade span { display: none; }
+.slab--small .slab__brand b { font-size: 9px; }
+.slab--small .slab__info b { font-size: 9px; }
+.slab--small .slab__info span { font-size: 7.5px; }
+.slab--small .slab__grade { min-width: 22px; }
+.slab--small .slab__grade b { font-size: 16px; }
+.ctile.is-graded .ctile__card { border-radius: 12px; }
+.showcase__card .slab { width: 100%; }
+.grade-badge { position: absolute; top: 6px; left: 6px; z-index: 4; padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 900; background: #fff; color: #c8102e; border: 1.5px solid #c8102e; }
+.grade-badge.is-gem { color: #8a5d00; border-color: #c9971c; background: #fff6d6; }
+.variant-row.is-graded { background: rgba(255, 215, 110, 0.12); box-shadow: inset 0 0 0 1px rgba(255, 215, 110, 0.35); }
+
+.grade-dialog { display: grid; grid-template-columns: 230px 1fr; gap: 28px; align-items: start; }
+.grade-dialog__card { position: sticky; top: 0; }
+.grade-dialog__main h2 { font-size: 24px; margin: 6px 0 2px; }
+.godds { display: grid; gap: 6px; margin-bottom: 8px; }
+.godds__row { display: grid; grid-template-columns: 28px 92px 1fr 52px 84px; align-items: center; gap: 10px; font-size: 14px; }
+.godds__grade { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: var(--surface-3); font-weight: 900; }
+.godds__row.is-gem .godds__grade { background: linear-gradient(135deg, #ffe08a, #f0b400); color: #4a3300; }
+.godds__name { color: var(--ink-2); font-weight: 700; font-size: 13px; }
+.godds__pct { color: var(--ink-3); text-align: right; font-variant-numeric: tabular-nums; }
+.godds__value { text-align: right; font-variant-numeric: tabular-nums; }
+.grade-dialog__buy { margin-top: 12px; }
+
+.grading-panel { margin-bottom: 20px; }
+.grading-panel__head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.grading-panel__head h3 { margin: 0; }
+.grading-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+.grading-item { display: grid; grid-template-columns: 38px 1fr auto; gap: 10px; align-items: center; padding: 8px 12px 8px 8px; border-radius: 14px; background: var(--surface-2); }
+.grading-item img, .grading-item__ph { width: 38px; aspect-ratio: 245 / 342; border-radius: 3px; object-fit: cover; background: var(--surface-3); }
+.grading-item > div { display: grid; min-width: 0; }
+.grading-item b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 14px; }
+.grading-item__time { font-weight: 900; font-variant-numeric: tabular-nums; color: var(--brand); }
+.grading-item.is-ready { background: #fff6d6; }
+
+.grade-stage { justify-content: center; }
+.grade-reveal { width: min(300px, 70vw, calc(58vh * 0.57)); cursor: pointer; animation: dropIn 0.8s var(--ease-spring); }
+.grade-reveal .slab { width: 100%; box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.9), 0 30px 60px -20px rgba(0, 0, 0, 0.8); }
+
+#tabs [data-view] { position: relative; }
+#tabs [data-badge]:not([data-badge=""])::after {
+  content: attr(data-badge); position: absolute; top: 2px; right: 4px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px;
+  background: var(--bad); color: #fff; font-size: 11px; font-weight: 900; line-height: 18px; text-align: center; box-shadow: 0 2px 6px rgba(229, 72, 77, 0.5);
+}
+
+/* =========================================================================
    Modal, toasts
    ========================================================================= */
 
@@ -854,6 +933,10 @@ select.input { padding-right: 34px; appearance: none; background: var(--surface)
   .source-grid { grid-template-columns: 1fr; gap: 0; }
   .best { flex-direction: column; text-align: center; }
   .showcase { grid-template-columns: 1fr; gap: 20px; justify-items: center; text-align: center; }
+  .grade-dialog { grid-template-columns: 1fr; }
+  .grade-dialog__card { position: static; width: 150px; margin: 0 auto; }
+  .godds__row { grid-template-columns: 26px 1fr 48px 74px; }
+  .godds__row .odds-row__bar { display: none; }
   .showcase__card { width: min(300px, 78vw); }
   .showcase__info { justify-items: center; }
   .showcase__info h2 { font-size: 26px; }
