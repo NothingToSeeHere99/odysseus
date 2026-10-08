@@ -78,3 +78,42 @@ test('without credentials the proxy serves the game and reports Scrydex as not c
   assert.strictEqual((await get(`http://127.0.0.1:${port}/scrydex/en/expansions`)).status, 503);
   assert.strictEqual((await get(`http://127.0.0.1:${port}/js/api.js`)).status, 200);
 });
+
+test('proxy forwards TCGdex (GraphQL POST and REST GET) without credentials, and caches both', async (t) => {
+  const hits = [];
+  const upstream = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => (body += c));
+    req.on('end', () => {
+      hits.push({ method: req.method, url: req.url, body, key: req.headers['x-api-key'] });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(req.method === 'POST' ? JSON.stringify({ data: { sets: [{ id: 'sv03.5' }] } }) : JSON.stringify({ id: 'sv03.5-001', pricing: {} }));
+    });
+  });
+  const upPort = await listen(upstream);
+  const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'packrush-cache-'));
+  const { port, child } = await startProxy({ SCRYDEX_API_KEY: 'secret', SCRYDEX_TEAM_ID: 'team', TCGDEX_UPSTREAM: `http://127.0.0.1:${upPort}/v2`, CACHE_DIR: cacheDir });
+  t.after(() => {
+    child.kill();
+    upstream.close();
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+  });
+  assert.strictEqual(JSON.parse((await get(`http://127.0.0.1:${port}/scrydex/health`)).text).tcgdex, true);
+
+  const post = (query) => fetch(`http://127.0.0.1:${port}/tcgdex/graphql`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query }) });
+  const a = await post('{ sets { id } }');
+  assert.strictEqual(a.headers.get('x-cache'), 'miss');
+  assert.strictEqual((await a.json()).data.sets[0].id, 'sv03.5');
+  assert.strictEqual((await post('{ sets { id } }')).headers.get('x-cache'), 'hit');
+  assert.strictEqual((await post('{ sets { name } }')).headers.get('x-cache'), 'miss', 'different query, different cache entry');
+
+  const g = await get(`http://127.0.0.1:${port}/tcgdex/en/cards/sv03.5-001`);
+  assert.strictEqual(g.status, 200);
+  assert.strictEqual((await get(`http://127.0.0.1:${port}/tcgdex/en/cards/sv03.5-001`)).headers.get('x-cache'), 'hit');
+
+  assert.strictEqual(hits.length, 3);
+  assert.deepStrictEqual(hits.map((x) => `${x.method} ${x.url}`), ['POST /v2/graphql', 'POST /v2/graphql', 'GET /v2/en/cards/sv03.5-001']);
+  assert.ok(hits.every((x) => !x.key), 'Scrydex key never sent to TCGdex');
+  assert.strictEqual((await fetch(`http://127.0.0.1:${port}/tcgdex/en/cards`, { method: 'POST', body: '{}' })).status, 405);
+  assert.strictEqual((await fetch(`http://127.0.0.1:${port}/scrydex/en/expansions`, { method: 'POST', body: '{}' })).status, 405);
+});

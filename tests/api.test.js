@@ -69,12 +69,34 @@ test('Scrydex cards convert to the same shape as legacy cards', () => {
   assert.strictEqual(PP.api.variantKey('reverseHolofoil'), 'reverseHolofoil');
 });
 
-test('auto mode falls back to Scrydex when the free API is down, then sticks with it', async () => {
+test('auto mode: free API down → TCGdex (free) before Scrydex, and it sticks for the session', async () => {
   const seen = [];
   const PP = load({
     fetch: async (url, init) => {
       seen.push(url);
       if (url.startsWith('https://api.pokemontcg.io')) throw new TypeError('fetch failed');
+      if (url.startsWith('https://api.tcgdex.net/v2/graphql')) {
+        assert.strictEqual(init.method, 'POST');
+        return ok({ data: { sets: [{ id: 'sv03.5', name: '151', releaseDate: '2023-09-22', serie: { id: 'sv', name: 'Scarlet & Violet' }, cardCount: { total: 207, official: 165 }, logo: 'https://assets.tcgdex.net/en/sv/sv03.5/logo' }, { id: 'A1', name: 'Genetic Apex', releaseDate: '2024-10-30', serie: { id: 'tcgp', name: 'Pokémon TCG Pocket' }, cardCount: { total: 286, official: 226 } }] } });
+      }
+      throw new Error('Scrydex should not be used while TCGdex works: ' + url);
+    },
+  });
+  PP.api.saveSettings({ scrydexKey: 'k', scrydexTeam: 't' });
+  const sets = await PP.api.getSets(true);
+  assert.strictEqual(JSON.stringify(sets), JSON.stringify([{ id: 'sv3pt5', name: '151', series: 'Scarlet & Violet', total: 207, printed: 165, date: '2023-09-22', logo: 'https://assets.tcgdex.net/en/sv/sv03.5/logo.png' }]));
+  seen.length = 0;
+  await PP.api.getSets(true);
+  assert.ok(seen[0].startsWith('https://api.tcgdex.net'), 'TCGdex first after the free API failed');
+  assert.strictEqual((await PP.api.status()).lastSource, 'tcgdex');
+});
+
+test('auto mode falls back to Scrydex when both free sources fail, then stops retrying them first', async () => {
+  const calls = [];
+  const PP = load({
+    fetch: async (url, init) => {
+      calls.push(url);
+      if (!url.startsWith('https://api.scrydex.com')) throw new TypeError('fetch failed');
       assert.strictEqual(init.headers['X-Api-Key'], 'k');
       assert.strictEqual(init.headers['X-Team-ID'], 't');
       return ok({ data: [{ id: 'me1', name: 'Mega Evolution', series: 'Mega Evolution', total: 188, printed_total: 132, release_date: '2025/09/26' }], total_count: 1 });
@@ -83,22 +105,98 @@ test('auto mode falls back to Scrydex when the free API is down, then sticks wit
   PP.api.saveSettings({ scrydexKey: 'k', scrydexTeam: 't' });
   const sets = await PP.api.getSets(true);
   assert.strictEqual(sets[0].id, 'me1');
-  assert.ok(seen.some((u) => u.startsWith('https://api.scrydex.com/pokemon/v1/en/expansions')));
-  seen.length = 0;
+  const st = await PP.api.status();
+  assert.strictEqual(st.lastSource, 'scrydex');
+  assert.deepStrictEqual([...st.down].sort(), ['legacy', 'tcgdex']);
+  calls.length = 0;
   await PP.api.getSets(true);
-  assert.ok(seen[0].startsWith('https://api.scrydex.com'), 'Scrydex first after the free API failed');
-  assert.strictEqual((await PP.api.status()).lastSource, 'scrydex');
+  assert.ok(calls[0].startsWith('https://api.scrydex.com'), 'failed sources are not retried first');
 });
 
-test('without Scrydex, auto mode only uses the free API; after the shutdown date Scrydex goes first', async () => {
+test('source order before and after the Pokémon TCG API shutdown', async () => {
   const first = [];
-  const PP = load({ fetch: async (url) => (first.push(url), ok({ data: [], totalCount: 0 })) });
+  const PP = load({ fetch: async (url) => (first.push(url), ok({ data: [{ id: 'base1', name: 'Base', series: 'Base', total: 102, printedTotal: 102, releaseDate: '1999/01/09', images: {} }], totalCount: 1 })) });
   await PP.api.getSets(true);
   assert.ok(first[0].startsWith('https://api.pokemontcg.io'));
 
-  const later = [];
-  const PP2 = load({ now: Date.UTC(2027, 2, 2), fetch: async (url) => (later.push(url), ok({ data: [], total_count: 0 })) });
-  PP2.api.saveSettings({ scrydexKey: 'k', scrydexTeam: 't' });
+  const after = [];
+  const tcgdexSets = { data: { sets: [{ id: 'me01', name: 'Mega Evolution', releaseDate: '2025-09-26', serie: { id: 'me', name: 'Mega Evolution' }, cardCount: { total: 188, official: 132 } }] } };
+  const PP2 = load({ now: Date.UTC(2027, 2, 2), fetch: async (url) => (after.push(url), ok(url.includes('tcgdex') ? tcgdexSets : { data: [{ id: 'me1' }], total_count: 1 })) });
   await PP2.api.getSets(true);
-  assert.ok(later[0].startsWith('https://api.scrydex.com'));
+  assert.ok(after[0].startsWith('https://api.tcgdex.net'), 'no Scrydex: TCGdex replaces the shut-down API');
+  assert.ok(!after.some((u) => u.includes('pokemontcg.io')));
+
+  const paid = [];
+  const PP3 = load({ now: Date.UTC(2027, 2, 2), fetch: async (url) => (paid.push(url), ok({ data: [{ id: 'me1', name: 'Mega Evolution', release_date: '2025/09/26' }], total_count: 1 })) });
+  PP3.api.saveSettings({ scrydexKey: 'k', scrydexTeam: 't' });
+  await PP3.api.getSets(true);
+  assert.ok(paid[0].startsWith('https://api.scrydex.com'), 'Scrydex set up: it takes over after the shutdown');
+});
+
+test('TCGdex set ids translate to Pokémon TCG API ids for every set', () => {
+  const PP = load({ fetch: async () => fail(500) });
+  const pairs = require('./fixtures/tcgdex-set-ids.json');
+  const wrong = Object.entries(pairs).filter(([theirs, ours]) => PP.api.fromTcgdexSet(theirs) !== ours);
+  assert.strictEqual(Object.keys(pairs).length, 176);
+  assert.deepStrictEqual(wrong, []);
+  // Unknown future sets follow the same pattern.
+  assert.strictEqual(PP.api.fromTcgdexSet('sv11'), 'sv11');
+  assert.strictEqual(PP.api.fromTcgdexSet('me06.5'), 'me6pt5');
+});
+
+test('TCGdex cards convert to the same shape, with numbers and prices matching the other sources', () => {
+  const PP = load({ fetch: async () => fail(500) });
+  const c = PP.api.tcgdexCard(
+    { id: 'sv03.5-006', localId: '006', name: 'Charizard ex', rarity: 'Double rare', category: 'Pokemon', image: 'https://assets.tcgdex.net/en/sv/sv03.5/006' },
+    'sv3pt5',
+    {
+      tcgplayer: { unit: 'USD', updated: '2026-10-08', holofoil: { lowPrice: 4, midPrice: 6, marketPrice: 5.555 }, 'reverse-holofoil': { lowPrice: 9, midPrice: 11 }, normal: { lowPrice: 0 } },
+      cardmarket: { unit: 'EUR', trend: 4.2, 'trend-holo': 8.9 },
+    }
+  );
+  assert.strictEqual(
+    JSON.stringify(c),
+    JSON.stringify({ id: 'sv3pt5-6', s: 'sv3pt5', n: 'Charizard ex', no: '6', r: 'Double rare', st: 'Pokémon', img: 'https://assets.tcgdex.net/en/sv/sv03.5/006/low.webp', big: 'https://assets.tcgdex.net/en/sv/sv03.5/006/high.webp', p: { holofoil: 5.56, reverseHolofoil: 11 }, cm: 4.2, cmr: 8.9 })
+  );
+  const tg = PP.api.tcgdexCard({ id: 'swsh9tg-TG01', localId: 'TG01', name: 'Flareon', rarity: 'None', category: 'Pokemon' }, 'swsh9tg', null);
+  assert.strictEqual(tg.id, 'swsh9tg-TG01');
+  assert.strictEqual(tg.r, '');
+  assert.strictEqual(tg.img, undefined);
+});
+
+test('TCGdex set cards: one GraphQL request with an exact id match, then one price request per card', async () => {
+  const graph = [];
+  const rest = [];
+  const PP = load({
+    fetch: async (url, init) => {
+      if (url.startsWith('https://api.pokemontcg.io')) throw new TypeError('down');
+      if (url.endsWith('/graphql')) {
+        const q = JSON.parse(init.body).query;
+        graph.push(q);
+        if (q.includes('{ sets { id } }')) return ok({ data: { sets: [{ id: 'sv03' }, { id: 'sv03.5' }] } });
+        return ok({ data: { set: { id: 'sv03.5', cards: [{ id: 'sv03.5-001', localId: '001', name: 'Bulbasaur', rarity: 'Common', category: 'Pokemon', image: 'https://a/1' }, { id: 'sv03.5-199', localId: '199', name: 'Charizard ex', rarity: 'Special illustration rare', category: 'Pokemon', image: 'https://a/199' }] } } });
+      }
+      rest.push(url);
+      const id = url.split('/').pop();
+      return ok({ id, pricing: { tcgplayer: id.endsWith('199') ? { holofoil: { marketPrice: 250 } } : { normal: { marketPrice: 0.12 }, 'reverse-holofoil': { marketPrice: 0.5 } } } });
+    },
+  });
+  PP.api.saveSettings({ source: 'tcgdex' });
+  const cards = await PP.api.getSetCards('sv3pt5', true);
+  assert.strictEqual(cards.map((c) => `${c.id}:${JSON.stringify(c.p)}`).join(' '), 'sv3pt5-1:{"normal":0.12,"reverseHolofoil":0.5} sv3pt5-199:{"holofoil":250}');
+  assert.ok(graph.some((q) => q.includes('"eq:sv03.5"')), 'exact match so sv03 doesn\'t match sv03.5');
+  assert.deepStrictEqual(rest.sort(), ['https://api.tcgdex.net/v2/en/cards/sv03.5-001', 'https://api.tcgdex.net/v2/en/cards/sv03.5-199']);
+  // Price refresh for owned cards maps our ids back to TCGdex's.
+  rest.length = 0;
+  const owned = await PP.api.getCardsByIds(['sv3pt5-199']);
+  assert.strictEqual(owned.length, 1);
+  assert.strictEqual(owned[0].p.holofoil, 250);
+  assert.deepStrictEqual(rest, ['https://api.tcgdex.net/v2/en/cards/sv03.5-199']);
+});
+
+test('without Scrydex, auto mode never calls it', async () => {
+  const seen = [];
+  const PP = load({ fetch: async (url) => (seen.push(url), ok({ data: [], totalCount: 0 })) });
+  await PP.api.getSets(true).catch(() => {});
+  assert.ok(!seen.some((u) => u.includes('scrydex')));
 });

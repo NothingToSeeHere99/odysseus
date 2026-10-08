@@ -28,6 +28,10 @@ test('rarity strings map to tiers', () => {
     'Illustration Rare': 'IR', 'Special Illustration Rare': 'SR', 'Hyper Rare': 'SR', 'Ultra Rare': 'UR', 'Rare Ultra': 'UR',
     'Rare Secret': 'SR', 'Rare Rainbow': 'SR', 'Shiny Ultra Rare': 'SR', 'Shiny Rare': 'UR', 'Rare Holo Star': 'SR', 'ACE SPEC Rare': 'DR',
     'Trainer Gallery Rare Holo': 'IR', 'Amazing Rare': 'DR', Promo: 'R', '': 'C',
+    // TCGdex spellings
+    'Double rare': 'DR', 'Holo Rare': 'RH', 'Holo Rare V': 'DR', 'Holo Rare VMAX': 'DR', 'Holo Rare VSTAR': 'DR', 'Illustration rare': 'IR',
+    'Special illustration rare': 'SR', 'Hyper rare': 'SR', 'Shiny rare': 'UR', 'Shiny rare V': 'UR', 'Full Art Trainer': 'UR', 'Rare PRIME': 'DR',
+    'Character Rare': 'IR', 'Character Super Rare': 'SR', 'Mega Attack Rare': 'UR', None: 'C',
   };
   for (const [r, t] of Object.entries(cases)) assert.strictEqual(E.tierOf(r), t, r);
 });

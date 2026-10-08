@@ -29,10 +29,13 @@
       draggable: 'false',
     });
     const face = h('div', { class: 'pcard__face' }, img, h('div', { class: 'pcard__shine' }), h('div', { class: 'pcard__sparkle' }), h('div', { class: 'pcard__glare' }));
-    img.addEventListener('error', () => {
+    const missing = () => {
+      if (face.classList.contains('is-missing')) return;
       face.classList.add('is-missing');
       face.append(h('div', { class: 'pcard__fallback' }, h('b', null, card.n), h('span', null, `#${card.no || ''}`)));
-    });
+    };
+    img.addEventListener('error', missing);
+    if (!img.getAttribute('src')) missing();
     const el = h('div', { class: `pcard fx-${effect} tier-${tier}` + (opts.className ? ' ' + opts.className : ''), 'data-effect': effect }, h('div', { class: 'pcard__rot' }, face));
     el._img = img;
     el._data = card;

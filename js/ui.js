@@ -969,8 +969,9 @@
       'select',
       { class: 'input' },
       [
-        ['auto', 'Automatic: free API first, Scrydex as backup'],
+        ['auto', 'Automatic: free sources first, Scrydex as backup'],
         ['pokemontcg', 'Pokémon TCG API only'],
+        ['tcgdex', 'TCGdex only'],
         ['scrydex', 'Scrydex only'],
       ].map(([val, label]) => h('option', { value: val, selected: (s.source || 'auto') === val }, label))
     );
@@ -984,9 +985,14 @@
 
     const refreshStatus = async () => {
       const st = await API.status();
-      const using = st.lastSource ? API.SOURCE_LABEL[st.lastSource] : st.mode === 'scrydex' ? 'Scrydex' : 'Pokémon TCG API';
+      const modeSource = { pokemontcg: 'legacy', tcgdex: 'tcgdex', scrydex: 'scrydex' }[st.mode];
+      const using = API.SOURCE_LABEL[st.lastSource || modeSource || (Date.now() >= st.sunset ? (st.scrydex ? 'scrydex' : 'tcgdex') : 'legacy')];
       const sx = st.scrydex === 'proxy' ? 'connected through the Pack Rush server (key kept off this browser)' : st.scrydex === 'direct' ? 'set up with a key in this browser' : 'not set up';
-      statusEl.replaceChildren(h('div', null, h('span', null, 'Loading cards from'), h('b', null, using)), h('div', null, h('span', null, 'Scrydex'), h('b', { class: st.scrydex ? 'good' : '' }, sx)));
+      statusEl.replaceChildren(
+        h('div', null, h('span', null, 'Loading cards from'), h('b', null, using)),
+        h('div', null, h('span', null, 'TCGdex'), h('b', { class: 'good' }, st.tcgdexViaProxy ? 'ready, cached by the Pack Rush server' : 'ready (free, no key)')),
+        h('div', null, h('span', null, 'Scrydex'), h('b', { class: st.scrydex ? 'good' : '' }, sx))
+      );
     };
     refreshStatus();
 
@@ -1030,7 +1036,7 @@
           'div',
           null,
           h('b', null, `The free Pokémon TCG API shuts down on ${sunset}.`),
-          h('p', null, 'After that, cards come from Scrydex, its official paid successor (plans start at $29/month). In automatic mode the game switches over by itself as soon as Scrydex is set up, and uses it as a backup whenever the free API is down.')
+          h('p', null, 'After that, automatic mode loads cards from TCGdex, a free open-source database, with nothing to set up. Scrydex, the official paid successor (from $29/month), is optional: once set up it becomes the main source after the shutdown, with TCGdex as its backup.')
         )
       ),
       statusEl,
@@ -1044,7 +1050,9 @@
           h('h4', null, 'Pokémon TCG API · free'),
           h('p', { class: 'muted small' }, 'A free key from dev.pokemontcg.io raises the rate limit.'),
           field('API key', legacyKey),
-          field('Base URL', legacyBase)
+          field('Base URL', legacyBase),
+          h('h4', null, 'TCGdex · free'),
+          h('p', { class: 'muted small' }, 'Needs no setup. It looks up each card’s price separately, so a set takes a few seconds to load the first time; after that it’s cached (and the bundled server caches it on disk too).')
         ),
         h(
           'div',

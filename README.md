@@ -55,14 +55,22 @@ The age premium is meant to match sealed-pack prices in real life: about ×1.0 f
 
 ## Card data sources
 
-Cards, images and prices come from one of two places:
+Cards, images and prices come from one of three places. They all use the same card IDs, so your collection carries over between them.
 
-| Source | Cost | Status |
+| Source | Cost | Notes |
 | --- | --- | --- |
-| [Pokémon TCG API](https://pokemontcg.io) | Free (an optional free key from dev.pokemontcg.io raises the rate limit) | **Goes offline on March 1, 2027** |
-| [Scrydex](https://scrydex.com) | Paid, from $29/month for 5,000 credits | The official successor |
+| [Pokémon TCG API](https://pokemontcg.io) | Free (an optional free key from dev.pokemontcg.io raises the rate limit) | The default. **Goes offline on March 1, 2027** |
+| [TCGdex](https://tcgdex.dev) | Free, no key | Open source. Prices come from a separate request per card, so a set takes a few seconds to load the first time; after that it's cached |
+| [Scrydex](https://scrydex.com) | Paid, from $29/month for 5,000 credits | The official successor to the Pokémon TCG API |
 
-By default (**Profile → Card data → Automatic**) the game uses the free API. If Scrydex is set up, the game uses it as a backup when the free API is down and switches to it completely after March 1, 2027. Card IDs are the same on both, so your collection carries over.
+**Profile → Card data → Automatic** (the default):
+- **Until March 1, 2027:** the Pokémon TCG API, then TCGdex if it's down, then Scrydex if you've set it up.
+- **After March 1, 2027:** Scrydex if you've set it up, otherwise TCGdex. Nothing else to do: TCGdex needs no key.
+- A source that fails is moved to the back for the rest of the session, so it doesn't slow down every request.
+
+You can also pick a single source. **Test connections** checks all three.
+
+TCGdex uses its own set IDs (e.g. `sv03.5` for 151). The game translates them; `tests/fixtures/tcgdex-set-ids.json` pins the mapping for all 176 sets. TCG Pocket sets, which only exist in TCGdex, aren't offered.
 
 ### Setting up Scrydex
 
@@ -77,7 +85,8 @@ By default (**Profile → Card data → Automatic**) the game uses the free API.
 
 The server (`server/proxy.js`, no dependencies):
 - keeps the key on your computer instead of in the browser, as Scrydex recommends
-- caches Scrydex responses on disk for 12 hours (`CACHE_HOURS` to change), so reloading or playing on another browser doesn't spend credits again
+- caches Scrydex and TCGdex responses on disk for 12 hours (`CACHE_HOURS` to change), so reloading or playing on another browser doesn't spend credits or repeat TCGdex's per-card price lookups
+- works without Scrydex credentials too: `npm start` alone serves the game and caches TCGdex
 - only listens on 127.0.0.1 unless you set `HOST`; set `PORT` to change the port
 
 If you host the game somewhere else, enter the server's address under **Server URL**. You can also paste a key straight into the browser instead. Scrydex advises against that, and its API may refuse requests made directly from a web page.
@@ -90,8 +99,8 @@ Each Scrydex request costs 1 credit, and a set takes 1–3 requests. Card data i
 index.html
 css/styles.css
 js/util.js         helpers, seeded RNG, storage
-js/api.js          card data sources (Pokémon TCG API, Scrydex) + cache
-server/proxy.js    optional local server: serves the game, proxies Scrydex
+js/api.js          card data sources (Pokémon TCG API, TCGdex, Scrydex) + cache
+server/proxy.js    optional local server: serves the game, proxies and caches Scrydex and TCGdex
 js/economy.js      rarity tiers, pull rates, pricing, shop rotation
 js/game.js         wallet, income, collection, buy/sell
 js/components.js   icons, booster pack, card back, rarity marks
@@ -103,6 +112,6 @@ js/ui.js           views and routing
 tests/             node unit tests for the economy
 ```
 
-Run the tests with `npm test`. They need Node 18 or newer and cover the economy, both card data sources and the server.
+Run the tests with `npm test`. They need Node 18 or newer and cover the economy, all three card data sources and the server.
 
 Pokémon and all card names, images and trademarks belong to Nintendo, Creatures Inc. and GAME FREAK inc. This is a private fan project and isn't affiliated with or endorsed by them.

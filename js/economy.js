@@ -42,12 +42,12 @@
       return 'R';
     }
     const r = String(rarity || '').toLowerCase().trim();
-    if (!r || r === 'common') return 'C';
+    if (!r || r === 'common' || r === 'none') return 'C';
     if (r === 'uncommon') return 'U';
-    if (/special illustration|hyper|secret|rainbow|shiny ultra|holo star|mega hyper|black white|shining/.test(r)) return 'SR';
-    if (/illustration rare|trainer gallery/.test(r)) return 'IR';
-    if (/ultra|shiny/.test(r)) return 'UR';
-    if (/double|holo (ex|gx|v|vmax|vstar|lv\.x)$|prime|legend|break|prism|amazing|radiant|\bace\b/.test(r)) return 'DR';
+    if (/special illustration|hyper|secret|rainbow|shiny ultra|holo star|mega hyper|black white|shining|character super/.test(r)) return 'SR';
+    if (/illustration rare|trainer gallery|character rare/.test(r)) return 'IR';
+    if (/ultra|shiny|full art|mega attack|triple rare/.test(r)) return 'UR';
+    if (/double|holo (ex|gx|v|vmax|vstar|lv\.x)$|holo rare (v|vmax|vstar)$|prime|legend|break|prism|amazing|radiant|\bace\b/.test(r)) return 'DR';
     if (/holo/.test(r)) return 'RH';
     return 'R'; // plain "Rare", promos, anything unknown
   }
@@ -128,6 +128,7 @@
     swsh45: ['swsh45sv'],
     sm115: ['sma'],
     cel25: ['cel25c'],
+    me55: ['me55c'],
   };
   const SUBSET_IDS = new Set(Object.values(SUBSETS).flat());
 
