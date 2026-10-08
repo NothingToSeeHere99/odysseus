@@ -58,7 +58,7 @@
             onerror: (e) => e.target.replaceWith(h('span', { class: 'pack__logo-text' }, set.name)),
           })
         : h('span', { class: 'pack__logo-text' }, set.name);
-    return h(
+    const el = h(
       'div',
       { class: 'pack' + (opts.big ? ' pack--big' : '') + (mystery ? ' pack--mystery' : '') + (promo ? ' pack--promo' : '') + (art ? ' has-art' : ''), style },
       h('div', { class: 'pack__cap' }),
@@ -76,6 +76,9 @@
         )
       )
     );
+    // Don't use a card-back placeholder picture as the wrapper's artwork.
+    if (art && PP.card) PP.card.checkImage(art).then((isBack) => isBack && el.classList.remove('has-art'));
+    return el;
   }
 
   function cardBack() {

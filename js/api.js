@@ -792,6 +792,19 @@
     return cards;
   }
 
+  // TCGdex's scan of a card, for when the main source only has a placeholder picture.
+  async function altImage(card) {
+    if (!card || !card.id || /tcgdex\.net/.test(card.img || '')) return null;
+    try {
+      const setId = card.s || card.id.slice(0, card.id.lastIndexOf('-'));
+      const list = await tcgdexSetCardListCached(setId);
+      const hit = list.find((c) => `${setId}-${fromTcgdexNumber(String(c.localId))}` === card.id);
+      return hit && hit.image ? { img: hit.image + '/low.webp', big: hit.image + '/high.webp' } : null;
+    } catch {
+      return null;
+    }
+  }
+
   function peekSets() {
     return memSets;
   }
@@ -851,6 +864,7 @@
     getCardsByIds,
     onPrices,
     cacheStats,
+    altImage,
     clearCache,
     testSources,
     status,

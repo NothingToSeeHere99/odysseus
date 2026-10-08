@@ -17,28 +17,140 @@
     return 'none';
   }
 
+  // ---- placeholder pictures ------------------------------------------------
+  //
+  // Some database entries point at a picture of the official card back instead of a
+  // scan. Images are checked once (a 20×28 thumbnail: blue border, red-over-white Poké Ball
+  // in the middle) and replaced with TCGdex's scan, or a name card if there isn't one.
+  // Hosts that don't allow inspection (no CORS) just display normally.
+
+  const BACKS_KEY = 'packrush.cardbacks';
+  const CORS_KEY = 'packrush.imgcors';
+  const backs = new Set(U.store.get(BACKS_KEY, []) || []);
+  const fronts = new Set();
+  const cors = U.store.get(CORS_KEY, {}) || {};
+
+  function hostOf(url) {
+    try {
+      return new URL(url, root.location && root.location.href).host;
+    } catch {
+      return '';
+    }
+  }
+
+  function looksLikeCardBack(imgEl) {
+    const W = 20;
+    const H = 28;
+    const c = document.createElement('canvas');
+    c.width = W;
+    c.height = H;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(imgEl, 0, 0, W, H);
+    const d = ctx.getImageData(0, 0, W, H).data; // throws if the image can't be inspected
+    const px = (x, y) => {
+      const i = (y * W + x) * 4;
+      return [d[i], d[i + 1], d[i + 2], d[i + 3]];
+    };
+    const isBlue = ([r, g, b, a]) => a > 128 && b > r + 35 && b > g + 10;
+    const isRed = ([r, g, b, a]) => a > 128 && r > 140 && g < 120 && b < 120;
+    const isWhite = ([r, g, b, a]) => a > 128 && r > 175 && g > 175 && b > 175;
+    let edge = 0;
+    let blue = 0;
+    for (let y = 3; y < H - 3; y++) for (const x of [0, 1, W - 2, W - 1]) (edge++, isBlue(px(x, y)) && blue++);
+    for (let x = 3; x < W - 3; x++) for (const y of [0, 1, H - 2, H - 1]) (edge++, isBlue(px(x, y)) && blue++);
+    const count = (pts, test) => pts.filter(([x, y]) => test(px(x, y))).length;
+    const red = count([[9, 10], [10, 10], [8, 11], [11, 11], [10, 9]], isRed);
+    const white = count([[9, 17], [10, 17], [8, 16], [11, 16], [10, 18]], isWhite);
+    return blue / edge > 0.55 && red >= 3 && white >= 3;
+  }
+
+  function remember(urls, isBack) {
+    for (const u of urls.filter(Boolean)) (isBack ? backs : fronts).add(u);
+    if (isBack) U.store.set(BACKS_KEY, [...backs].slice(-500));
+  }
+
+  // Resolves true if the picture at url is a card back (false if unknown or a real scan).
+  function checkImage(url) {
+    if (!url || fronts.has(url)) return Promise.resolve(false);
+    if (backs.has(url)) return Promise.resolve(true);
+    if (cors[hostOf(url)] === false) return Promise.resolve(false);
+    return new Promise((resolve) => {
+      const im = new Image();
+      im.crossOrigin = 'anonymous';
+      im.onload = () => {
+        try {
+          const b = looksLikeCardBack(im);
+          remember([url], b);
+          resolve(b);
+        } catch {
+          resolve(false);
+        }
+      };
+      im.onerror = () => resolve(false);
+      im.src = url;
+    });
+  }
+
   function cardEl(card, opts = {}) {
     const tier = opts.tier || E.tierOf(card);
     const effect = effectFor(tier, opts.variant);
-    const img = h('img', {
-      class: 'pcard__img',
-      alt: card.n,
-      src: opts.big ? card.big || card.img : card.img,
-      loading: opts.eager ? 'eager' : 'lazy',
-      decoding: 'async',
-      draggable: 'false',
-    });
+    const src = opts.big ? card.big || card.img : card.img;
+    const img = h('img', { class: 'pcard__img', alt: card.n, loading: opts.eager ? 'eager' : 'lazy', decoding: 'async', draggable: 'false' });
     const face = h('div', { class: 'pcard__face' }, img, h('div', { class: 'pcard__shine' }), h('div', { class: 'pcard__sparkle' }), h('div', { class: 'pcard__glare' }));
-    const missing = () => {
-      if (face.classList.contains('is-missing')) return;
-      face.classList.add('is-missing');
-      face.append(h('div', { class: 'pcard__fallback' }, h('b', null, card.n), h('span', null, `#${card.no || ''}`)));
-    };
-    img.addEventListener('error', missing);
-    if (!img.getAttribute('src')) missing();
     const el = h('div', { class: `pcard fx-${effect} tier-${tier}` + (opts.className ? ' ' + opts.className : ''), 'data-effect': effect }, h('div', { class: 'pcard__rot' }, face));
     el._img = img;
     el._data = card;
+
+    const missing = () => {
+      if (face.classList.contains('is-missing')) return;
+      face.classList.add('is-missing');
+      img.removeAttribute('src');
+      face.append(h('div', { class: 'pcard__fallback' }, h('b', null, card.n), h('span', null, `#${card.no || ''}`)));
+    };
+    // The database's picture is a card back: try TCGdex's scan, else a name card.
+    const replace = async () => {
+      remember([card.img, card.big], true);
+      img.style.visibility = 'hidden';
+      const alt = PP.api && PP.api.altImage ? await PP.api.altImage(card) : null;
+      if (!alt) return missing();
+      el._data = { ...card, ...alt };
+      img.removeAttribute('crossorigin');
+      img.addEventListener('load', () => (img.style.visibility = ''), { once: true });
+      img.src = opts.big ? alt.big : alt.img;
+    };
+
+    if (!src) missing();
+    else if (backs.has(src)) replace();
+    else {
+      const host = hostOf(src);
+      const inspect = !fronts.has(src) && cors[host] !== false;
+      if (inspect) img.crossOrigin = 'anonymous';
+      img.addEventListener('load', () => {
+        if (!img.crossOrigin || img.dataset.checked) return;
+        img.dataset.checked = '1';
+        let isBack;
+        try {
+          isBack = looksLikeCardBack(img);
+        } catch {
+          return;
+        }
+        if (cors[host] !== true) U.store.set(CORS_KEY, Object.assign(cors, { [host]: true }));
+        remember([src], isBack);
+        if (isBack) replace();
+      });
+      img.addEventListener('error', () => {
+        // Host refuses inspection: show the picture normally from now on.
+        if (img.crossOrigin && cors[host] !== true && !img.dataset.retried) {
+          img.dataset.retried = '1';
+          U.store.set(CORS_KEY, Object.assign(cors, { [host]: false }));
+          img.removeAttribute('crossorigin');
+          img.src = src;
+          return;
+        }
+        missing();
+      });
+      img.src = src;
+    }
     if (opts.interactive) interactive(el, { auto: opts.auto });
     return el;
   }
@@ -47,10 +159,12 @@
   function upgrade(el) {
     const img = el._img;
     const card = el._data;
-    if (!img || !card || !card.big || img.dataset.big) return;
+    if (!img || !card || !card.big || img.dataset.big || !img.getAttribute('src')) return;
+    if (backs.has(card.img)) return;
     img.dataset.big = '1';
     const hi = new Image();
-    hi.onload = () => (img.src = card.big);
+    if (img.crossOrigin) hi.crossOrigin = 'anonymous';
+    hi.onload = () => img.getAttribute('src') && (img.src = card.big);
     hi.src = card.big;
   }
 
@@ -156,5 +270,5 @@
     } else listen();
   }
 
-  PP.card = { cardEl, effectFor, interactive, upgrade, enableOrientation };
+  PP.card = { cardEl, effectFor, interactive, upgrade, enableOrientation, checkImage, looksLikeCardBack };
 })(typeof window !== 'undefined' ? window : globalThis);
