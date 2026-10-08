@@ -10,6 +10,8 @@ Open `index.html` in a browser. There's nothing to build or install. To serve it
 npm start   # serves on http://localhost:8787
 ```
 
+To get a single file you can download, share or keep anywhere, run `npm run build`. It writes `dist/pack-rush.html` with everything inlined; double-click it to play.
+
 Progress is saved in the browser's local storage. To move it to another device, use **Profile → Export save**.
 
 ## How it works

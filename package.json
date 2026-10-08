@@ -1,9 +1,10 @@
 {
   "name": "pack-rush",
   "private": true,
-  "description": "Pokémon TCG pack opening game with a rotating shop.",
+  "description": "Pok\u00e9mon TCG pack opening game with a rotating shop.",
   "scripts": {
     "start": "node server/proxy.js",
-    "test": "node --test tests/*.test.js"
+    "test": "node --test tests/*.test.js",
+    "build": "node scripts/build-single.js"
   }
 }
