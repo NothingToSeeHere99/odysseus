@@ -75,21 +75,61 @@ test('pack prices stay within $1-$500 and older sets cost more', () => {
   assert.strictEqual(E.charm(37.2), 37.99);
 });
 
-test('shop rotation is deterministic per 12h window and mixes eras', () => {
+test('shop: featured newest set plus 12 deterministic rotating packs', () => {
   const sets = [];
   for (let y = 1999; y <= 2025; y++) for (let k = 0; k < 4; k++) sets.push({ id: `s${y}${k}`, name: `Set ${y}-${k}`, series: 'X', date: `${y}/0${k + 1}/15`, total: 100 });
   sets.push({ id: 'mcd21', name: "McDonald's Collection 2021", series: 'Other', date: '2021/02/09', total: 25 });
+  sets.push({ id: 'cel25', name: 'Celebrations', series: 'Sword & Shield', date: '2021/10/08', total: 25 });
   sets.push({ id: 'swshp', name: 'SWSH Black Star Promos', series: 'Sword & Shield', date: '2019/11/15', total: 300 });
+  sets.push({ id: 'swsh12tg', name: 'Silver Tempest Trainer Gallery', series: 'Sword & Shield', date: '2022/11/11', total: 30 });
+  sets.push({ id: 'future', name: 'Not Out Yet', series: 'X', date: '2027/01/01', total: 200 });
   const t = Date.UTC(2026, 9, 8, 3);
-  const a = E.shopSets(sets, t).map((s) => s.id);
-  const b = E.shopSets(sets, t + 5 * 3600e3).map((s) => s.id);
-  const c = E.shopSets(sets, t + 12 * 3600e3).map((s) => s.id);
-  assert.deepStrictEqual(a, b);
-  assert.notDeepStrictEqual(a, c);
-  assert.strictEqual(a.length, 8);
-  assert.strictEqual(new Set(a).size, 8);
-  assert.ok(!a.includes('swshp'));
-  assert.ok(a.some((id) => Number(id.slice(1, 5)) < 2003));
+  const a = E.shopSets(sets, t);
+  const b = E.shopSets(sets, t + 5 * 3600e3);
+  const c = E.shopSets(sets, t + 12 * 3600e3);
+  const ids = (x) => x.rotation.map((s) => s.id);
+  assert.strictEqual(a.featured.id, 's20253');
+  assert.deepStrictEqual(ids(a), ids(b));
+  assert.notDeepStrictEqual(ids(a), ids(c));
+  assert.strictEqual(a.rotation.length, 12);
+  assert.strictEqual(new Set(ids(a)).size, 12);
+  for (const bad of ['swshp', 'swsh12tg', 'future', 's20253']) assert.ok(!ids(a).includes(bad), bad);
+  assert.ok(ids(a).filter((id) => Number(id.slice(1, 5)) < 2003).length >= 2);
+});
+
+test('small special sets open as 4-card packs; bundles are discounted', () => {
+  const { set, cards } = fakeSet('cel25', '2021/10/08', { 'Rare Holo': 20, 'Rare Holo V': 5 }, { 'Rare Holo': 2, 'Rare Holo V': 6 });
+  set.total = 25;
+  const model = E.packModel(set, cards, Date.UTC(2026, 9, 8));
+  assert.strictEqual(model.era, 'mini');
+  assert.strictEqual(E.openPack(model, U.mulberry32(3)).length, 4);
+  assert.strictEqual(model.bundle, E.bundlePrice(model.price));
+  assert.ok(model.bundle < model.price * 6 && model.bundle > model.price * 5);
+  assert.strictEqual(model.chase.length, 8);
+  assert.ok(model.chase[0].value >= model.chase[7].value);
+});
+
+test('pull-rate odds are probabilities that shrink with rarity', () => {
+  const { set, cards } = fakeSet('swsh7', '2021/08/27', { Common: 70, Uncommon: 50, Rare: 20, 'Rare Holo': 15, 'Rare Holo V': 20, 'Rare Ultra': 25, 'Rare Secret': 15 }, { Common: 0.08, Uncommon: 0.12, Rare: 0.4, 'Rare Holo': 1, 'Rare Holo V': 2, 'Rare Ultra': 8, 'Rare Secret': 30 });
+  const model = E.packModel(set, cards, Date.UTC(2026, 9, 8));
+  const odds = E.packOdds(model);
+  assert.strictEqual(odds.map((o) => o.tier).join(), 'RH,DR,UR,SR');
+  for (let i = 0; i < odds.length; i++) {
+    assert.ok(odds[i].p > 0 && odds[i].p < 1);
+    if (i) assert.ok(odds[i].p < odds[i - 1].p);
+  }
+  // Simulate: share of packs with a secret rare should match the stated odds.
+  const rng = U.mulberry32(9);
+  let hits = 0;
+  const N = 40000;
+  for (let i = 0; i < N; i++) if (E.openPack(model, rng).some((p) => p.tier === 'SR')) hits++;
+  const sr = odds.find((o) => o.tier === 'SR').p;
+  assert.ok(Math.abs(hits / N - sr) < 0.004, `${hits / N} vs ${sr}`);
+});
+
+test('mystery pack is priced at the rotation average', () => {
+  assert.strictEqual(E.mysteryPrice([{ price: 4.49 }, { price: 20.99 }, { price: 99.99 }]), 41.99);
+  assert.strictEqual(E.mysteryPrice([]), null);
 });
 
 test('reverse holo price falls back sensibly', () => {

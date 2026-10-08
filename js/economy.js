@@ -88,25 +88,63 @@
     return Math.max(0.01, U.round2(v));
   }
 
+  // The most a card can be pulled for from an unlimited pack (used for chase lists and pack art).
+  function cardValue(card) {
+    const p = card.p || {};
+    let best = 0;
+    for (const [v, price] of Object.entries(p)) if (!/^1stEdition/.test(v) && price > best) best = price;
+    return best || priceOf(card, variantFor(card, 'rare', tierOf(card.r)));
+  }
+
   function variantLabel(v) {
     return VARIANT_LABEL[v] || v.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase());
   }
 
-  // ---- pack layouts ------------------------------------------------------
+  // ---- sets --------------------------------------------------------------
+
+  // Sub-sets whose cards were pulled from the parent set's packs.
+  const SUBSETS = {
+    swsh9: ['swsh9tg'],
+    swsh10: ['swsh10tg'],
+    swsh11: ['swsh11tg'],
+    swsh12: ['swsh12tg'],
+    swsh12pt5: ['swsh12pt5gg'],
+    swsh45: ['swsh45sv'],
+    sm115: ['sma'],
+    cel25: ['cel25c'],
+  };
+  const SUBSET_IDS = new Set(Object.values(SUBSETS).flat());
+
+  function isMini(set) {
+    return /mcdonald/i.test(set.name) || (set.total > 0 && set.total < 30);
+  }
 
   function eraOf(set) {
-    if (/mcdonald/i.test(set.name)) return 'mini';
+    if (isMini(set)) return 'mini';
     const t = U.parseDate(set.date);
     if (t < Date.UTC(2002, 8, 1)) return 'wotc'; // Base Set through Legendary Collection
     if (t >= Date.UTC(2023, 2, 1)) return 'sv'; // Scarlet & Violet onward
     return 'reverse'; // e-Card through Sword & Shield
   }
 
+  function bucketOf(set) {
+    if (isMini(set)) return 'special';
+    const y = U.yearOf(set.date);
+    if (y < 2003) return 'vintage';
+    if (y < 2011) return 'classic';
+    if (y < 2020) return 'modern';
+    return 'current';
+  }
+
+  const BUCKET_LABEL = { vintage: 'Vintage', classic: 'Classic', modern: 'Modern', current: 'Current', special: 'Special' };
+
+  // ---- pack layouts ------------------------------------------------------
+
   const LAYOUTS = {
     wotc: [['C', 7], ['U', 3], ['RARE', 1]],
     reverse: [['C', 5], ['U', 3], ['REV', 1], ['RARE', 1]],
     sv: [['C', 4], ['U', 3], ['REV', 1], ['HIT', 1], ['RARE', 1]],
-    mini: [['ANY', 4]],
+    mini: [['ANY', 3], ['RARE', 1]],
   };
 
   // Approximate real pull rates for the rare slot. Tiers a set lacks are dropped
@@ -115,6 +153,7 @@
     wotc: { R: 0.66, RH: 0.33, DR: 0.03, UR: 0.03, SR: 0.01 },
     reverse: { R: 0.62, RH: 0.2, DR: 0.12, IR: 0.03, UR: 0.045, SR: 0.012 },
     sv: { R: 0.72, RH: 0.05, DR: 0.17, UR: 0.067, SR: 0.008 },
+    mini: { R: 0.5, RH: 0.3, DR: 0.12, IR: 0.03, UR: 0.04, SR: 0.01 },
   };
   const REV_WEIGHTS = { C: 0.55, U: 0.3, R: 0.1, RH: 0.05 };
   // Scarlet & Violet's second reverse slot can upgrade to an Illustration / Special Illustration rare.
@@ -158,7 +197,7 @@
 
   // ---- pack value & price ------------------------------------------------
 
-  // Sealed packs get pricier with age: (out of print, opened over time).
+  // Sealed packs get pricier with age (out of print, opened over time).
   function agePremium(years) {
     return 1 + 0.004 * Math.pow(Math.max(0, years), 2.6);
   }
@@ -172,6 +211,12 @@
 
   const MARKUP = 1.2;
   const BASE_COST = 1; // printing, distribution, the shop's cut
+  const BUNDLE_SIZE = 6;
+  const BUNDLE_DISCOUNT = 0.05;
+
+  function bundlePrice(price) {
+    return U.round2(Math.max(1, Math.ceil(price * BUNDLE_SIZE * (1 - BUNDLE_DISCOUNT)) - 0.01));
+  }
 
   function packModel(set, cards, now = Date.now()) {
     const era = eraOf(set);
@@ -190,7 +235,48 @@
     const age = agePremium(years);
     const price = charm((ev * MARKUP + BASE_COST) * age);
     const size = slots.reduce((s, x) => s + x.n, 0);
-    return { set, era, pools, slots, ev: U.round2(ev), years, age, price, size, cardCount: cards.length };
+    const chase = cards
+      .map((c) => ({ card: c, value: cardValue(c) }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 8);
+    const star = chase.find((x) => x.card.st === 'Pokémon') || chase[0];
+    return {
+      set,
+      era,
+      bucket: bucketOf(set),
+      pools,
+      slots,
+      ev: U.round2(ev),
+      years,
+      age,
+      price,
+      bundle: bundlePrice(price),
+      size,
+      cardCount: cards.length,
+      chase,
+      art: star ? star.card.big || star.card.img : null,
+    };
+  }
+
+  // Chance that one pack contains at least one card of each tier or better.
+  function packOdds(model) {
+    const out = [];
+    for (const t of ['RH', 'DR', 'IR', 'UR', 'SR']) {
+      if (!model.pools[t].length) continue;
+      const r = tierRank(t);
+      let none = 1;
+      for (const s of model.slots) {
+        let p = 0;
+        for (const d of s.dist) {
+          const pool = model.pools[d.tier];
+          const frac = d.tier === 'ALL' ? pool.filter((c) => tierRank(tierOf(c.r)) >= r).length / pool.length : tierRank(d.tier) >= r ? 1 : 0;
+          p += d.w * frac;
+        }
+        none *= Math.pow(1 - p, s.n);
+      }
+      out.push({ tier: t, p: 1 - none });
+    }
+    return out;
   }
 
   const SPECIAL_SLOTS = new Set(['REV', 'HIT', 'RARE']);
@@ -221,27 +307,24 @@
     return normal.concat(special);
   }
 
-  // ---- rotating shop -----------------------------------------------------
+  // ---- shop --------------------------------------------------------------
 
   const EXCLUDE = /promo|trainer gallery|galarian gallery|shiny vault|futsal|trainer kit|energies|classic collection|best of game/i;
 
   function isEligible(set, now) {
-    if (EXCLUDE.test(set.name)) return false;
+    if (EXCLUDE.test(set.name) || SUBSET_IDS.has(set.id)) return false;
     if (U.parseDate(set.date) > now) return false;
     if (/mcdonald/i.test(set.name)) return set.total >= 6;
-    return set.total >= 30;
+    return set.total >= 10;
   }
 
-  function bucketOf(set) {
-    if (/mcdonald/i.test(set.name)) return 'mini';
-    const y = U.yearOf(set.date);
-    if (y < 2003) return 'vintage';
-    if (y < 2011) return 'classic';
-    if (y < 2020) return 'modern';
-    return 'current';
-  }
-
-  const SHOP_PLAN = [['vintage', 1], ['classic', 2], ['modern', 2], ['current', 2], ['wild', 1]];
+  const SHOP_PLAN = [
+    ['vintage', 2],
+    ['classic', 3],
+    ['modern', 3],
+    ['current', 3],
+    ['wild', 1],
+  ];
 
   function rotationIndex(now) {
     return Math.floor(now / ROTATION_MS);
@@ -251,46 +334,69 @@
     return (rotationIndex(now) + 1) * ROTATION_MS;
   }
 
+  // The newest full-size set is always on the shelf.
+  function featuredSet(sets, now = Date.now()) {
+    return sets.filter((s) => isEligible(s, now) && !isMini(s)).sort((a, b) => U.parseDate(b.date) - U.parseDate(a.date))[0] || null;
+  }
+
   // Same rotation index -> same packs for everyone. Only sets released before the
   // rotation began are eligible, so a new set release can't reshuffle a live rotation.
   function shopSets(sets, now = Date.now()) {
     const idx = rotationIndex(now);
     const start = idx * ROTATION_MS;
+    const featured = featuredSet(sets, now);
     const rng = U.mulberry32(U.hashStr('packrush-shop-' + idx));
-    const eligible = sets.filter((s) => isEligible(s, start)).sort((a, b) => (a.id < b.id ? -1 : 1));
-    const buckets = { vintage: [], classic: [], modern: [], current: [], mini: [] };
+    const eligible = sets.filter((s) => isEligible(s, start) && (!featured || s.id !== featured.id)).sort((a, b) => (a.id < b.id ? -1 : 1));
+    const buckets = { vintage: [], classic: [], modern: [], current: [], special: [] };
     for (const s of eligible) buckets[bucketOf(s)].push(s);
 
-    const chosen = [];
+    const rotation = [];
     for (const [bucket, n] of SHOP_PLAN) {
       let pool;
-      if (bucket === 'wild') pool = rng() < 0.4 && buckets.mini.length ? buckets.mini : eligible;
+      if (bucket === 'wild') pool = rng() < 0.5 && buckets.special.length ? buckets.special : eligible;
       else pool = buckets[bucket];
-      const picks = U.shuffle(pool.filter((s) => !chosen.includes(s)), rng).slice(0, n);
-      chosen.push(...picks);
+      const picks = U.shuffle(pool.filter((s) => !rotation.includes(s)), rng).slice(0, n);
+      rotation.push(...picks);
     }
-    return chosen;
+    return { featured, rotation };
+  }
+
+  // A random pack from the current rotation, priced at the rotation's average.
+  function mysteryPrice(models) {
+    if (!models.length) return null;
+    return charm(models.reduce((s, m) => s + m.price, 0) / models.length);
   }
 
   PP.economy = {
     TIERS,
     TIER_LABEL,
+    BUCKET_LABEL,
     ROTATION_MS,
+    SUBSETS,
+    BUNDLE_SIZE,
+    BUNDLE_DISCOUNT,
+    MARKUP,
+    BASE_COST,
     tierOf,
     tierRank,
     variantFor,
     priceOf,
+    cardValue,
     variantLabel,
     eraOf,
+    bucketOf,
+    isMini,
     agePremium,
     charm,
+    bundlePrice,
     packModel,
+    packOdds,
     openPack,
     isEligible,
+    featuredSet,
     shopSets,
+    mysteryPrice,
     rotationIndex,
     rotationEndsAt,
-    MARKUP,
-    BASE_COST,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

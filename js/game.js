@@ -105,11 +105,8 @@
 
   // ---- buying ------------------------------------------------------------
 
-  function buyAndOpen(model) {
-    if (state.money < model.price) throw new Error('Not enough money');
+  function openOne(model, paid, now, label) {
     const pulls = E.openPack(model);
-    const now = Date.now();
-    state.money = U.round2(state.money - model.price);
     let value = 0;
     for (const pull of pulls) {
       const { card, variant } = pull;
@@ -121,16 +118,28 @@
       e.at = now;
       value += pull.price;
       if (!state.stats.best || pull.price > state.stats.best.price) {
-        state.stats.best = { id: card.id, name: card.n, img: card.img, big: card.big, v: variant, price: pull.price, set: model.set.name, at: now };
+        state.stats.best = { id: card.id, name: card.n, img: card.img, big: card.big, r: card.r, v: variant, price: pull.price, set: model.set.name, at: now };
       }
     }
     state.stats.packs += 1;
-    state.stats.spent = U.round2(state.stats.spent + model.price);
-    state.log.unshift({ t: now, set: model.set.id, name: model.set.name, paid: model.price, value: U.round2(value) });
+    state.log.unshift({ t: now, set: model.set.id, name: label || model.set.name, paid, value: U.round2(value) });
+    return { pulls, paid, value: U.round2(value) };
+  }
+
+  // Buy `count` packs for `price` in total and open them all. Returns one result per pack.
+  function purchase(model, { count = 1, price = model.price * count, label } = {}) {
+    price = U.round2(price);
+    if (state.money < price) throw new Error(`You need ${U.money(price - state.money)} more.`);
+    const now = Date.now();
+    state.money = U.round2(state.money - price);
+    state.stats.spent = U.round2(state.stats.spent + price);
+    const each = U.round2(price / count);
+    const results = [];
+    for (let i = 0; i < count; i++) results.push(openOne(model, each, now, label));
     state.log = state.log.slice(0, 50);
     save();
     emit();
-    return { pulls, paid: model.price, value: U.round2(value) };
+    return results;
   }
 
   // ---- selling -----------------------------------------------------------
@@ -258,7 +267,7 @@
     collectionValue,
     setSummary,
     copiesOf,
-    buyAndOpen,
+    purchase,
     sell,
     sellMany,
     duplicateItems,

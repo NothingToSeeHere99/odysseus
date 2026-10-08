@@ -1,11 +1,14 @@
-// Views (shop, binder, collection, profile), routing, modal and toasts.
+// Views (shop, binder, collection, profile), routing, modals and toasts.
 (function (root) {
   const PP = root.PP;
   const U = PP.util;
   const E = PP.economy;
   const G = PP.game;
   const API = PP.api;
+  const C = PP.card;
+  const sfx = PP.sfx;
   const h = U.h;
+  const ui = PP.ui;
 
   const view = () => document.getElementById('view');
   let renderToken = 0;
@@ -13,7 +16,8 @@
   // ---- toasts & modal ----------------------------------------------------
 
   function toast(msg, kind = '') {
-    const el = h('div', { class: `toast ${kind}` }, msg);
+    const ico = kind === 'good' ? 'sparkle' : kind === 'bad' ? 'info' : 'info';
+    const el = h('div', { class: `toast ${kind}` }, ui.icon(ico), h('span', null, msg));
     document.getElementById('toasts').append(el);
     setTimeout(() => el.classList.add('out'), 3200);
     setTimeout(() => el.remove(), 3700);
@@ -21,28 +25,33 @@
 
   function closeModal() {
     const m = document.getElementById('modal');
-    m.classList.add('hidden');
+    m.className = 'modal hidden';
     m.innerHTML = '';
+    document.body.classList.remove('modal-open');
   }
 
-  function openModal(content) {
+  function openModal(content, opts = {}) {
     const m = document.getElementById('modal');
     m.innerHTML = '';
-    m.append(h('div', { class: 'modal-box' }, h('button', { class: 'modal-x', onclick: closeModal, 'aria-label': 'Close' }, '×'), content));
-    m.classList.remove('hidden');
+    m.className = 'modal' + (opts.dark ? ' modal--dark' : '') + (opts.cls ? ' ' + opts.cls : '');
+    if (opts.style) m.setAttribute('style', opts.style);
+    else m.removeAttribute('style');
+    m.append(h('div', { class: 'modal__box' + (opts.wide ? ' modal__box--wide' : '') }, h('button', { class: 'modal__x', onclick: closeModal, 'aria-label': 'Close' }, ui.icon('close')), content));
+    document.body.classList.add('modal-open');
   }
 
-  function confirmBox(text, okLabel, onOk) {
+  function confirmBox(title, text, okLabel, onOk) {
     openModal(
       h(
         'div',
         { class: 'confirm' },
-        h('p', null, text),
+        h('h3', null, title),
+        h('p', { class: 'muted' }, text),
         h(
           'div',
-          { class: 'row' },
-          h('button', { class: 'btn ghost', onclick: closeModal }, 'Cancel'),
-          h('button', { class: 'btn primary', onclick: () => (closeModal(), onOk()) }, okLabel)
+          { class: 'row end' },
+          h('button', { class: 'btn', onclick: closeModal }, 'Cancel'),
+          h('button', { class: 'btn btn--primary', onclick: () => (closeModal(), onOk()) }, okLabel)
         )
       )
     );
@@ -50,22 +59,47 @@
 
   // ---- header ------------------------------------------------------------
 
+  let shownMoney = null;
   function updateHeader() {
-    document.getElementById('balance').textContent = U.money(G.state.money);
-    document.querySelectorAll('[data-bind=money]').forEach((el) => (el.textContent = U.money(G.state.money)));
+    const money = G.state.money;
+    const bal = document.getElementById('balance');
+    if (shownMoney != null && Math.abs(money - shownMoney) >= 0.01) {
+      ui.countUp(bal, shownMoney, money, 600);
+      const chip = document.getElementById('wallet');
+      chip.classList.remove('bump-up', 'bump-down');
+      void chip.offsetWidth;
+      chip.classList.add(money > shownMoney ? 'bump-up' : 'bump-down');
+    } else bal.textContent = U.money(money);
+    shownMoney = money;
+    document.querySelectorAll('[data-bind=money]').forEach((el) => (el.textContent = U.money(money)));
     document.querySelectorAll('[data-bind=value]').forEach((el) => (el.textContent = U.money(G.collectionValue())));
+    document.querySelectorAll('[data-afford]').forEach((el) => (el.disabled = money < Number(el.dataset.afford)));
   }
 
   function tick() {
     const now = Date.now();
     const gained = G.accrue(now);
-    if (gained) toast(`+${U.money(gained)} income collected`, 'good');
-    document.getElementById('income').textContent = `+$${G.INCOME} in ${U.fmtDuration(G.nextIncomeIn(now))}`;
+    if (gained) {
+      toast(`+${U.money(gained)} income collected`, 'good');
+      sfx.coin();
+    }
+    const left = G.nextIncomeIn(now);
+    document.getElementById('incomeText').textContent = U.fmtDuration(left);
+    document.getElementById('incomeRing').style.setProperty('--p', (1 - left / PP.HOUR).toFixed(4));
     document.querySelectorAll('[data-countdown]').forEach((el) => (el.textContent = U.fmtDuration(Number(el.dataset.countdown) - now)));
-    if (E.rotationIndex(now) !== shownRotation && currentRoute().name === 'shop' && shownRotation != null) {
+    const end = E.rotationEndsAt(now);
+    document.querySelectorAll('[data-rotation-bar]').forEach((el) => el.style.setProperty('--p', (1 - (end - now) / E.ROTATION_MS).toFixed(4)));
+    if (shownRotation != null && E.rotationIndex(now) !== shownRotation && currentRoute().name === 'shop') {
       toast('The shop has restocked with new packs!', 'good');
       render();
     }
+  }
+
+  function updateSoundBtn() {
+    const b = document.getElementById('soundBtn');
+    b.replaceChildren(ui.icon(sfx.muted ? 'soundOff' : 'soundOn'));
+    b.setAttribute('aria-label', sfx.muted ? 'Unmute sounds' : 'Mute sounds');
+    b.classList.toggle('is-off', sfx.muted);
   }
 
   // ---- routing -----------------------------------------------------------
@@ -77,12 +111,13 @@
 
   function render() {
     const { name, arg } = currentRoute();
-    document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('active', b.dataset.view === name));
+    document.querySelectorAll('#tabs [data-view]').forEach((b) => b.classList.toggle('is-active', b.dataset.view === name));
     const token = ++renderToken;
     const v = view();
     v.innerHTML = '';
+    v.className = 'view view--' + name;
     window.scrollTo(0, 0);
-    const views = { shop: renderShop, binder: arg ? (v, t) => renderBinderSet(v, t, arg) : renderBinder, collection: renderCollection, profile: renderProfile };
+    const views = { shop: renderShop, binder: arg ? (el, t) => renderBinderSet(el, t, arg) : renderBinder, collection: renderCollection, profile: renderProfile };
     (views[name] || renderShop)(v, token);
   }
 
@@ -96,11 +131,27 @@
     return h(
       'div',
       { class: 'error-box' },
-      h('b', null, 'Could not reach the card database.'),
-      h('p', null, String(err && err.message ? err.message : err)),
-      h('p', { class: 'muted' }, 'The free pokemontcg.io API can be slow or rate limited. Adding a free API key on the Profile tab helps.'),
-      h('button', { class: 'btn', onclick: retry }, 'Try again')
+      ui.icon('info', 'ico--lg'),
+      h('h3', null, 'Couldn’t reach the card database'),
+      h('p', { class: 'muted' }, String(err && err.message ? err.message : err)),
+      h('p', { class: 'muted small' }, 'The free pokemontcg.io API can be slow or rate limited. Adding a free API key on the Profile tab helps.'),
+      h('button', { class: 'btn btn--primary', onclick: retry }, ui.icon('refresh'), 'Try again')
     );
+  }
+
+  function emptyState(title, text) {
+    return h(
+      'div',
+      { class: 'empty' },
+      h('div', { class: 'empty__art' }, ui.cardBack()),
+      h('h2', null, title),
+      h('p', { class: 'muted' }, text),
+      h('a', { class: 'btn btn--buy', href: '#shop' }, ui.icon('shop'), 'Visit the shop')
+    );
+  }
+
+  function pageHead(title, sub, extra) {
+    return h('header', { class: 'page-head' }, h('div', null, h('h1', null, title), sub ? h('p', { class: 'muted' }, sub) : null), extra || null);
   }
 
   // Fetch a set's cards and keep prices of owned cards fresh as a side effect.
@@ -108,6 +159,20 @@
     const cards = await API.getSetCards(setId, force);
     G.updateMeta(cards);
     return cards;
+  }
+
+  // A set's pack pool includes sub-sets pulled from the same packs (Trainer Gallery etc.).
+  async function packCards(set) {
+    const ids = [set.id, ...(E.SUBSETS[set.id] || [])];
+    const lists = await Promise.all(
+      ids.map((id, i) =>
+        setCards(id).catch((e) => {
+          if (i === 0) throw e;
+          return [];
+        })
+      )
+    );
+    return lists.flat();
   }
 
   // ---- shop --------------------------------------------------------------
@@ -118,7 +183,7 @@
   function getModel(set, rotation) {
     const key = `${rotation}:${set.id}`;
     if (!modelCache.has(key)) {
-      const p = setCards(set.id).then((cards) => {
+      const p = packCards(set).then((cards) => {
         if (!cards.length) throw new Error('This set has no card data yet');
         return E.packModel(set, cards);
       });
@@ -128,130 +193,312 @@
     return modelCache.get(key);
   }
 
+  function priceButton(label, price, onclick, cls = 'btn--buy') {
+    return h('button', { class: `btn ${cls}`, 'data-afford': price, disabled: G.state.money < price, onclick }, label, h('span', { class: 'btn__price' }, U.money(price)));
+  }
+
+  function setYear(set) {
+    return set.date ? U.yearOf(set.date) : '';
+  }
+
   async function renderShop(v, token) {
     const now = Date.now();
     shownRotation = E.rotationIndex(now);
-    v.append(
-      h(
-        'div',
-        { class: 'view-head' },
-        h('div', null, h('h1', null, 'Pack Shop'), h('p', { class: 'muted' }, 'Prices follow real market values. The lineup changes every 12 hours.')),
-        h('div', { class: 'rotation' }, h('span', { class: 'muted' }, 'New packs in'), h('b', { 'data-countdown': E.rotationEndsAt(now) }, U.fmtDuration(E.rotationEndsAt(now) - now)))
-      )
+    const end = E.rotationEndsAt(now);
+    const hero = h('section', { class: 'hero is-loading' }, h('div', { class: 'hero__copy' }, h('div', { class: 'skel skel--line w40' }), h('div', { class: 'skel skel--title' }), h('div', { class: 'skel skel--line w60' })), h('div', { class: 'hero__visual' }, h('div', { class: 'skel skel--pack' })));
+    const restock = h(
+      'div',
+      { class: 'restock' },
+      ui.icon('clock'),
+      h('div', null, h('span', { class: 'restock__label' }, 'Restocks in'), h('b', { 'data-countdown': end }, U.fmtDuration(end - now))),
+      h('div', { class: 'restock__bar', 'data-rotation-bar': '' }, h('i'))
     );
     const grid = h('div', { class: 'shop-grid' });
-    const status = loading('Loading the shop…');
-    v.append(status, grid);
+    v.append(hero, h('div', { class: 'section-head' }, h('div', null, h('h2', null, 'Rotating packs'), h('p', { class: 'muted' }, 'Twelve sets from across the game’s history, plus a mystery pack. The lineup changes every 12 hours.')), restock), grid);
+    tick();
 
     let sets;
     try {
       sets = await API.getSets();
     } catch (e) {
       if (stale(token)) return;
-      status.replaceWith(errorBox(e, render));
+      hero.replaceWith(errorBox(e, render));
+      grid.remove();
       return;
     }
     if (stale(token)) return;
-    status.remove();
 
-    const chosen = E.shopSets(sets, now);
-    const tiles = chosen.map((set) => {
-      const tile = h('div', { class: 'shop-tile loading-tile' }, PP.ui.packEl(set), h('div', { class: 'tile-info' }, h('div', { class: 'tile-name' }, set.name), h('div', { class: 'muted small' }, 'Pricing…')));
+    const { featured, rotation } = E.shopSets(sets, now);
+    const tiles = rotation.map((set) => {
+      const tile = skeletonTile(set);
       grid.append(tile);
       return { set, tile };
     });
+    const mystery = mysteryTile();
+    grid.append(mystery);
 
+    const models = [];
+    const jobs = [];
+    if (featured) jobs.push({ set: featured, done: (m) => fillHero(hero, m), fail: (e) => hero.replaceWith(errorBox(e, render)) });
+    else hero.remove();
+    for (const { set, tile } of tiles) {
+      jobs.push({
+        set,
+        done: (m) => {
+          models.push(m);
+          fillTile(tile, m);
+        },
+        fail: () => failTile(tile, set),
+      });
+    }
     // A few at a time to stay friendly with the API's rate limit.
-    const queue = tiles.slice();
     const worker = async () => {
-      while (queue.length) {
-        const { set, tile } = queue.shift();
+      while (jobs.length) {
+        const job = jobs.shift();
         try {
-          const model = await getModel(set, shownRotation);
+          const m = await getModel(job.set, shownRotation);
           if (stale(token)) return;
-          fillTile(tile, model);
+          job.done(m);
         } catch (e) {
           if (stale(token)) return;
-          tile.classList.remove('loading-tile');
-          tile.querySelector('.tile-info').replaceChildren(h('div', { class: 'tile-name' }, set.name), h('div', { class: 'bad small' }, 'Could not load this pack.'), h('button', { class: 'btn small', onclick: render }, 'Retry'));
+          job.fail(e);
         }
       }
     };
     await Promise.all([worker(), worker(), worker()]);
     if (stale(token)) return;
-    // Cheapest first once everything is priced.
-    const priced = [...grid.children].filter((t) => t.dataset.price).sort((a, b) => a.dataset.price - b.dataset.price);
-    priced.forEach((t) => grid.append(t));
+    fillMystery(mystery, models);
+  }
+
+  function skeletonTile(set) {
+    return h(
+      'article',
+      { class: 'ptile is-loading', style: `--h:${ui.hueOf(set)}` },
+      h('div', { class: 'ptile__stage' }, h('div', { class: 'skel skel--pack' })),
+      h('div', { class: 'ptile__body' }, h('div', { class: 'ptile__name' }, set.name), h('div', { class: 'skel skel--line w60' }), h('div', { class: 'skel skel--btn' }))
+    );
+  }
+
+  function failTile(tile, set) {
+    tile.classList.remove('is-loading');
+    tile.querySelector('.ptile__body').replaceChildren(h('div', { class: 'ptile__name' }, set.name), h('p', { class: 'muted small' }, 'Couldn’t load this pack.'), h('button', { class: 'btn btn--sm', onclick: render }, ui.icon('refresh'), 'Retry'));
+  }
+
+  function stagePack(model, opts = {}) {
+    const pack = ui.packEl(model.set, { model, ...opts });
+    C.interactive(pack);
+    return pack;
   }
 
   function fillTile(tile, model) {
     const { set } = model;
-    tile.classList.remove('loading-tile');
-    tile.dataset.price = model.price;
-    const pack = PP.ui.packEl(set, { size: model.size });
-    tile.querySelector('.pack').replaceWith(pack);
-    const buy = h('button', { class: 'btn primary buy' }, `Buy · ${U.money(model.price)}`);
-    const refresh = () => (buy.disabled = G.state.money < model.price);
-    refresh();
-    tile._refresh = refresh;
-    const doBuy = () => {
-      if (G.state.money < model.price) {
-        toast(`You need ${U.money(model.price - G.state.money)} more for this pack.`, 'bad');
-        return;
-      }
-      openPack(model);
-    };
-    buy.addEventListener('click', doBuy);
-    pack.addEventListener('click', doBuy);
-    tile.querySelector('.tile-info').replaceChildren(
-      h('div', { class: 'tile-name' }, set.name),
-      h('div', { class: 'muted small' }, `${set.series} · ${U.yearOf(set.date)} · ${model.size} cards`),
+    tile.classList.remove('is-loading');
+    const pack = stagePack(model);
+    pack.addEventListener('click', () => showPackDetails(model));
+    tile.querySelector('.ptile__stage').replaceChildren(pack);
+    const top = model.chase[0];
+    tile.querySelector('.ptile__body').replaceChildren(
+      h('div', { class: 'ptile__chips' }, ui.chip(E.BUCKET_LABEL[model.bucket], `chip--era chip--${model.bucket}`), ui.chip(String(setYear(set)))),
+      h('h3', { class: 'ptile__name', title: set.name }, set.name),
+      h('div', { class: 'ptile__sub' }, `${set.series} · ${model.size} cards`),
+      top ? h('div', { class: 'ptile__chase' }, ui.icon('sparkle'), h('span', null, 'Top pull: ', h('b', null, top.card.n)), h('span', { class: 'ptile__chase-price' }, U.money(top.value))) : null,
+      priceButton('Buy', model.price, () => buy(model, 1)),
       h(
-        'details',
-        { class: 'breakdown' },
-        h('summary', null, 'Why this price?'),
-        h(
-          'div',
-          { class: 'small' },
-          row('Expected card value', U.money(model.ev)),
-          row(`Store markup`, `×${E.MARKUP} + ${U.money(E.BASE_COST)}`),
-          row(`Sealed age premium (${model.years.toFixed(1)} yrs)`, `×${model.age.toFixed(2)}`),
-          row('Shop price', U.money(model.price))
-        )
-      ),
-      buy
+        'div',
+        { class: 'ptile__links' },
+        h('button', { class: 'link', 'data-afford': model.bundle, disabled: G.state.money < model.bundle, onclick: () => buy(model, E.BUNDLE_SIZE) }, ui.icon('gift'), `×${E.BUNDLE_SIZE} · ${U.money(model.bundle)}`),
+        h('button', { class: 'link', onclick: () => showPackDetails(model) }, ui.icon('info'), 'Odds & cards')
+      )
     );
   }
 
-  function row(label, value) {
-    return h('div', { class: 'kv' }, h('span', null, label), h('b', null, value));
+  function mysteryTile() {
+    const set = { id: 'mystery', name: 'Mystery Pack', series: 'Any era' };
+    return h(
+      'article',
+      { class: 'ptile ptile--mystery is-loading' },
+      h('div', { class: 'ptile__stage' }, ui.packEl(set, { mystery: true })),
+      h('div', { class: 'ptile__body' }, h('div', { class: 'ptile__chips' }, ui.chip('Mystery', 'chip--era chip--mystery')), h('h3', { class: 'ptile__name' }, 'Mystery Pack'), h('div', { class: 'ptile__sub' }, 'Pricing…'), h('div', { class: 'skel skel--btn' }))
+    );
   }
 
-  function openPack(model) {
-    let result;
+  function fillMystery(tile, models) {
+    if (!models.length) return tile.remove();
+    const price = E.mysteryPrice(models);
+    tile.classList.remove('is-loading');
+    const pack = tile.querySelector('.pack');
+    C.interactive(pack);
+    tile.querySelector('.ptile__body').replaceChildren(
+      h('div', { class: 'ptile__chips' }, ui.chip('Mystery', 'chip--era chip--mystery'), ui.chip(`${models.length} possible`)),
+      h('h3', { class: 'ptile__name' }, 'Mystery Pack'),
+      h('div', { class: 'ptile__sub' }, 'A random pack from this rotation. Every pack is equally likely, from the cheapest to the most expensive.'),
+      priceButton('Buy', price, () => buyMystery(models, price))
+    );
+  }
+
+  function fillHero(hero, model) {
+    const { set } = model;
+    hero.className = 'hero';
+    hero.style.setProperty('--h', ui.hueOf(set));
+    const fan = h(
+      'div',
+      { class: 'hero__fan' },
+      model.chase.slice(0, 2).map((c, i) => {
+        const el = C.cardEl(c.card, { tier: E.tierOf(c.card.r), variant: 'holofoil', interactive: true, className: `fan-${i}` });
+        el.addEventListener('click', () => showPackDetails(model));
+        return el;
+      })
+    );
+    const released = new Date(U.parseDate(set.date)).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' });
+    hero.replaceChildren(
+      h('div', { class: 'hero__bg' }),
+      h(
+        'div',
+        { class: 'hero__copy' },
+        h('span', { class: 'eyebrow' }, ui.icon('sparkle'), 'Newest release · Always in stock'),
+        set.logo ? h('img', { class: 'hero__logo', src: set.logo, alt: set.name, onerror: (e) => e.target.remove() }) : null,
+        h('h1', { class: 'hero__title' }, set.name),
+        h('p', { class: 'hero__sub' }, `${set.series} · Released ${released} · ${model.size} cards per pack`),
+        h(
+          'div',
+          { class: 'hero__buy' },
+          priceButton('Buy pack', model.price, () => buy(model, 1)),
+          priceButton(h('span', null, ui.icon('gift'), `Bundle ×${E.BUNDLE_SIZE}`), model.bundle, () => buy(model, E.BUNDLE_SIZE), 'btn--glass'),
+          h('button', { class: 'btn btn--ghost', onclick: () => showPackDetails(model) }, ui.icon('info'), 'Odds & cards')
+        )
+      ),
+      h('div', { class: 'hero__visual' }, fan, h('div', { class: 'hero__pack' }, stagePack(model)))
+    );
+  }
+
+  function showPackDetails(model) {
+    const { set } = model;
+    const odds = E.packOdds(model);
+    const chase = h(
+      'div',
+      { class: 'chase-grid' },
+      model.chase.map((c) =>
+        h(
+          'div',
+          { class: 'chase' },
+          C.cardEl(c.card, { tier: E.tierOf(c.card.r), variant: 'holofoil', interactive: true }),
+          h('div', { class: 'chase__name', title: c.card.n }, c.card.n),
+          h('div', { class: 'chase__price' }, U.money(c.value))
+        )
+      )
+    );
+    const oddsRows = odds.map((o) => {
+      const one = o.p > 0 ? Math.max(1, Math.round(1 / o.p)) : null;
+      return h(
+        'div',
+        { class: 'odds-row' },
+        ui.rarityEl(o.tier),
+        h('span', { class: 'odds-row__bar' }, h('i', { style: `width:${Math.max(2, Math.min(100, o.p * 100)).toFixed(1)}%` })),
+        h('b', null, one === 1 ? 'Every pack' : `1 in ${one}`)
+      );
+    });
+    const row = (label, value) => h('div', { class: 'kv' }, h('span', null, label), h('b', null, value));
+    openModal(
+      h(
+        'div',
+        { class: 'details', style: `--h:${ui.hueOf(set)}` },
+        h(
+          'div',
+          { class: 'details__side' },
+          h('div', { class: 'details__pack' }, stagePack(model)),
+          priceButton('Buy pack', model.price, () => buy(model, 1)),
+          priceButton(h('span', null, ui.icon('gift'), `Bundle ×${E.BUNDLE_SIZE}`), model.bundle, () => buy(model, E.BUNDLE_SIZE), 'btn--primary'),
+          h('p', { class: 'muted small center' }, `Bundles save ${Math.round(E.BUNDLE_DISCOUNT * 100)}%.`)
+        ),
+        h(
+          'div',
+          { class: 'details__main' },
+          h('div', { class: 'ptile__chips' }, ui.chip(E.BUCKET_LABEL[model.bucket], `chip--era chip--${model.bucket}`), ui.chip(String(setYear(set))), ui.chip(`${model.cardCount} cards in set`)),
+          h('h2', null, set.name),
+          h('p', { class: 'muted' }, `${set.series} · ${model.size} cards per pack`),
+          h('h4', null, 'Chase cards'),
+          chase,
+          odds.length ? h('h4', null, 'Pull rates') : null,
+          odds.length ? h('div', { class: 'odds' }, oddsRows) : null,
+          h('h4', null, 'How this pack is priced'),
+          h(
+            'div',
+            { class: 'breakdown' },
+            row('Expected value of the cards', U.money(model.ev)),
+            row('Store markup', `×${E.MARKUP} + ${U.money(E.BASE_COST)}`),
+            row(`Sealed age premium (${model.years.toFixed(1)} years)`, `×${model.age.toFixed(2)}`),
+            row('Shop price', U.money(model.price))
+          )
+        )
+      ),
+      { wide: true }
+    );
+  }
+
+  function afterOpen() {
+    if (currentRoute().name !== 'shop') render();
+  }
+
+  function buy(model, count) {
+    const price = count > 1 ? model.bundle : model.price;
+    const go = () => G.purchase(model, { count, price });
+    let results;
     try {
-      result = G.buyAndOpen(model);
+      results = go();
     } catch (e) {
+      sfx.error();
       toast(e.message, 'bad');
       return;
     }
-    PP.opener.open(model, result, {
+    sfx.buy();
+    closeModal();
+    PP.opener.open(model, results, {
+      againLabel: count > 1 ? `Another bundle · ${U.money(price)}` : `Open another · ${U.money(price)}`,
+      againPrice: price,
       onAgain: () => {
-        if (G.state.money < model.price) return null;
-        return G.buyAndOpen(model);
+        if (G.state.money < price) return null;
+        sfx.buy();
+        return { results: go() };
       },
-      onClose: () => currentRoute().name !== 'shop' && render(),
+      onClose: afterOpen,
+    });
+  }
+
+  function buyMystery(models, price) {
+    const pick = () => models[Math.floor(Math.random() * models.length)];
+    const go = (model) => G.purchase(model, { price, label: `Mystery Pack (${model.set.name})` });
+    const model = pick();
+    let results;
+    try {
+      results = go(model);
+    } catch (e) {
+      sfx.error();
+      toast(e.message, 'bad');
+      return;
+    }
+    sfx.buy();
+    PP.opener.open(model, results, {
+      mystery: true,
+      againLabel: `Another mystery · ${U.money(price)}`,
+      againPrice: price,
+      onAgain: () => {
+        if (G.state.money < price) return null;
+        sfx.buy();
+        const m = pick();
+        return { model: m, results: go(m) };
+      },
+      onClose: afterOpen,
     });
   }
 
   // ---- binder ------------------------------------------------------------
 
   async function renderBinder(v, token) {
-    v.append(h('div', { class: 'view-head' }, h('div', null, h('h1', null, 'Binder'), h('p', { class: 'muted' }, 'Every set you have pulled from. Open one to flip through its pages.'))));
     const summary = G.setSummary();
     const ids = Object.keys(summary);
+    v.append(pageHead('Binder', 'Every set you’ve pulled from. Open one to flip through its pages.'));
     if (!ids.length) {
-      v.append(emptyState('Your binder is empty', 'Open a few packs in the shop and your cards will show up here.'));
+      v.append(emptyState('Your binder is empty', 'Open a few packs and your cards will be filed here, set by set.'));
       return;
     }
     const status = loading('Loading sets…');
@@ -272,23 +519,25 @@
         { class: 'set-grid' },
         list.map(({ id, set, s }) => {
           const total = Math.max(set.total || 0, s.unique.size);
-          const pct = Math.round((s.unique.size / total) * 100);
+          const pct = s.unique.size / total;
           return h(
             'a',
-            { class: 'set-tile', href: `#binder/${encodeURIComponent(id)}` },
-            h('div', { class: 'set-logo' }, set.logo ? h('img', { src: set.logo, alt: set.name, loading: 'lazy' }) : h('b', null, set.name)),
-            h('div', { class: 'set-name' }, set.name),
-            h('div', { class: 'muted small' }, [set.series, set.date && U.yearOf(set.date)].filter(Boolean).join(' · ')),
-            h('div', { class: 'progress' }, h('div', { style: `width:${pct}%` })),
-            h('div', { class: 'kv small' }, h('span', null, `${s.unique.size} / ${total} cards · ${pct}%`), h('b', null, U.money(s.value)))
+            { class: 'set-tile', href: `#binder/${encodeURIComponent(id)}`, style: `--h:${ui.hueOf(set)}` },
+            h('div', { class: 'set-tile__logo' }, set.logo ? h('img', { src: set.logo, alt: set.name, loading: 'lazy' }) : h('b', null, set.name)),
+            h('div', { class: 'set-tile__ring', style: `--p:${pct.toFixed(4)}` }, h('span', null, `${Math.round(pct * 100)}%`)),
+            h('div', { class: 'set-tile__name' }, set.name),
+            h('div', { class: 'muted small' }, [set.series, setYear(set)].filter(Boolean).join(' · ')),
+            h('div', { class: 'set-tile__foot' }, h('span', null, `${s.unique.size} / ${total}`), h('b', null, U.money(s.value)))
           );
         })
       )
     );
   }
 
+  let redrawBinder = null;
+
   async function renderBinderSet(v, token, setId) {
-    v.append(h('a', { class: 'back', href: '#binder' }, '← All sets'));
+    v.append(h('a', { class: 'back', href: '#binder' }, ui.icon('left'), 'All sets'));
     const status = loading('Opening binder…');
     v.append(status);
     let cards, sets;
@@ -304,127 +553,164 @@
     const set = sets.find((s) => s.id === setId) || { id: setId, name: setId, series: '' };
     cards = cards.slice().sort((a, b) => U.cmpNum(a.no, b.no));
 
-    const ownedCount = (id) => G.copiesOf(id).reduce((s, e) => s + e.n, 0);
-    const owned = cards.filter((c) => ownedCount(c.id) > 0).length;
+    const copies = (id) => G.copiesOf(id);
+    const owned = () => cards.filter((c) => copies(c.id).length).length;
     const perPage = 9;
-    const spread = window.matchMedia('(min-width: 860px)').matches ? 2 : 1;
+    const spread = window.matchMedia('(min-width: 900px)').matches ? 2 : 1;
     let page = 0;
     let onlyOwned = false;
 
+    const progress = h('div', { class: 'progress' }, h('i'));
+    const countEl = h('span');
     const head = h(
-      'div',
-      { class: 'view-head' },
-      h('div', null, h('h1', null, set.name), h('p', { class: 'muted' }, `${owned} of ${cards.length} collected · ${Math.round((owned / Math.max(1, cards.length)) * 100)}% complete`)),
-      set.logo ? h('img', { class: 'binder-logo', src: set.logo, alt: '' }) : null
+      'header',
+      { class: 'binder-head', style: `--h:${ui.hueOf(set)}` },
+      set.logo ? h('img', { class: 'binder-head__logo', src: set.logo, alt: '' }) : null,
+      h('div', { class: 'binder-head__text' }, h('h1', null, set.name), h('p', { class: 'muted' }, [set.series, setYear(set)].filter(Boolean).join(' · ')), progress, countEl),
+      h('label', { class: 'switch' }, h('input', { type: 'checkbox', onchange: (e) => ((onlyOwned = e.target.checked), (page = 0), draw()) }), h('span', { class: 'switch__track' }), 'Only cards I own')
     );
     const book = h('div', { class: 'binder' });
-    const nav = h('div', { class: 'binder-nav' });
-    const toggle = h('label', { class: 'toggle' }, h('input', { type: 'checkbox', onchange: (e) => ((onlyOwned = e.target.checked), (page = 0), draw()) }), ' Only show cards I own');
-    v.append(head, toggle, book, nav);
+    const prev = h('button', { class: 'binder-arrow left', 'aria-label': 'Previous page', onclick: () => turn(-1) }, ui.icon('left'));
+    const next = h('button', { class: 'binder-arrow right', 'aria-label': 'Next page', onclick: () => turn(1) }, ui.icon('right'));
+    const pager = h('div', { class: 'pager' });
+    v.append(head, h('div', { class: 'binder-wrap' }, prev, book, next), pager);
+
+    const turn = (dir) => {
+      const before = page;
+      page += dir * spread;
+      draw();
+      if (page !== before) {
+        sfx.swoosh();
+        book.classList.remove('turn-next', 'turn-prev');
+        void book.offsetWidth;
+        book.classList.add(dir > 0 ? 'turn-next' : 'turn-prev');
+      }
+    };
+
+    const pocket = (c) => {
+      if (!c) return h('div', { class: 'pocket is-empty' });
+      const mine = copies(c.id);
+      if (!mine.length) return h('div', { class: 'pocket is-missing' }, set.symbol ? h('img', { class: 'pocket__symbol', src: set.symbol, alt: '' }) : null, h('span', { class: 'pocket__no' }, `#${c.no}`), h('span', { class: 'pocket__name' }, c.n));
+      const best = mine.sort((a, b) => b.price - a.price)[0];
+      const n = mine.reduce((s, e) => s + e.n, 0);
+      const card = C.cardEl(c, { variant: best.v, tier: E.tierOf(c.r), interactive: true });
+      return h('button', { class: 'pocket is-owned', onclick: () => showCard(c.id) }, card, n > 1 ? h('span', { class: 'count' }, `×${n}`) : null);
+    };
 
     const draw = () => {
-      const list = onlyOwned ? cards.filter((c) => ownedCount(c.id) > 0) : cards;
+      const have = owned();
+      countEl.textContent = `${have} of ${cards.length} collected`;
+      progress.style.setProperty('--p', (have / Math.max(1, cards.length)).toFixed(4));
+      const list = onlyOwned ? cards.filter((c) => copies(c.id).length) : cards;
       const total = Math.max(1, Math.ceil(list.length / perPage));
       page = U.clamp(page, 0, Math.max(0, total - spread));
       book.innerHTML = '';
       for (let p = page; p < Math.min(page + spread, total); p++) {
         const slots = list.slice(p * perPage, p * perPage + perPage);
-        book.append(
-          h(
-            'div',
-            { class: 'binder-page' },
-            Array.from({ length: perPage }, (_, i) => {
-              const c = slots[i];
-              if (!c) return h('div', { class: 'pocket empty' });
-              const n = ownedCount(c.id);
-              if (!n) return h('div', { class: 'pocket missing' }, h('span', { class: 'pocket-no' }, `#${c.no}`), h('span', { class: 'pocket-name' }, c.n));
-              const best = G.copiesOf(c.id).sort((a, b) => E.tierRank(E.tierOf(b.meta.r)) - E.tierRank(E.tierOf(a.meta.r)) || b.price - a.price)[0];
-              return h(
-                'button',
-                { class: `pocket owned tier-${E.tierOf(c.r)}` + (PP.ui.isShiny(E.tierOf(c.r), best.v) ? ' shiny' : ''), onclick: () => showCard(c.id) },
-                PP.ui.cardImg(c),
-                n > 1 ? h('span', { class: 'count' }, `×${n}`) : null
-              );
-            }),
-            h('div', { class: 'page-no' }, `Page ${p + 1}`)
-          )
-        );
+        book.append(h('div', { class: 'binder-page' }, Array.from({ length: perPage }, (_, i) => pocket(slots[i])), h('div', { class: 'binder-page__no' }, `${p + 1}`)));
       }
-      nav.innerHTML = '';
-      nav.append(
-        h('button', { class: 'btn ghost', disabled: page === 0, onclick: () => ((page -= spread), draw()) }, '‹ Prev'),
-        h('span', { class: 'muted' }, `Pages ${page + 1}${spread > 1 && page + 2 <= total ? `–${page + 2}` : ''} of ${total}`),
-        h('button', { class: 'btn ghost', disabled: page + spread >= total, onclick: () => ((page += spread), draw()) }, 'Next ›')
-      );
+      if (spread > 1) book.append(h('div', { class: 'binder-rings' }, h('i'), h('i'), h('i')));
+      prev.disabled = page === 0;
+      next.disabled = page + spread >= total;
+      pager.textContent = `Page ${page + 1}${spread > 1 && page + 2 <= total ? `–${page + 2}` : ''} of ${total}`;
     };
     draw();
     redrawBinder = draw;
+    setKeysForBinder(turn);
   }
 
-  let redrawBinder = null;
+  let binderKeys = null;
+  function setKeysForBinder(turn) {
+    if (binderKeys) document.removeEventListener('keydown', binderKeys);
+    binderKeys = (e) => {
+      if (currentRoute().name !== 'binder' || document.body.classList.contains('modal-open') || document.body.classList.contains('no-scroll')) return;
+      if (e.key === 'ArrowRight') turn(1);
+      if (e.key === 'ArrowLeft') turn(-1);
+    };
+    document.addEventListener('keydown', binderKeys);
+  }
 
-  // ---- card detail modal -------------------------------------------------
+  // ---- card showcase -----------------------------------------------------
 
   function showCard(id) {
-    const copies = G.copiesOf(id);
+    const copies = G.copiesOf(id).sort((a, b) => b.price - a.price);
     if (!copies.length) return closeModal();
     const meta = copies[0].meta;
     const tier = E.tierOf(meta.r);
-    const art = PP.ui.attachTilt(h('div', { class: `detail-card tier-${tier}` + (PP.ui.isShiny(tier, copies[0].v) ? ' shiny' : '') }, PP.ui.cardImg(meta, { big: true, eager: true }), h('div', { class: 'glare' })));
-    const rows = copies
-      .sort((a, b) => b.price - a.price)
-      .map((e) =>
+    const card = C.cardEl(meta, { variant: copies[0].v, tier, big: true, eager: true, interactive: true, auto: true });
+    C.upgrade(card);
+    const rows = copies.map((e) =>
+      h(
+        'div',
+        { class: 'variant-row' },
+        h('div', null, h('b', null, E.variantLabel(e.v)), h('div', { class: 'muted small' }, `Owned ×${e.n} · ${U.money(e.price)} each`)),
         h(
           'div',
-          { class: 'variant-row' },
-          h('div', null, h('b', null, E.variantLabel(e.v)), h('div', { class: 'muted small' }, `Owned ×${e.n} · ${U.money(e.price)} each`)),
-          h(
-            'div',
-            { class: 'row' },
-            h('button', { class: 'btn small', onclick: () => sellAndRefresh(id, e.key, 1) }, `Sell 1`),
-            e.n > 1 ? h('button', { class: 'btn small ghost', onclick: () => sellAndRefresh(id, e.key, e.n) }, `Sell all ${U.money(e.price * e.n)}`) : null
-          )
+          { class: 'row' },
+          h('button', { class: 'btn btn--sm btn--sell', onclick: () => sellAndRefresh(id, e.key, 1) }, ui.icon('tag'), `Sell 1`),
+          e.n > 1 ? h('button', { class: 'btn btn--sm', onclick: () => sellAndRefresh(id, e.key, e.n) }, `Sell all · ${U.money(e.price * e.n)}`) : null
         )
-      );
+      )
+    );
+    const total = copies.reduce((s, e) => s + e.price * e.n, 0);
     openModal(
       h(
         'div',
-        { class: 'detail' },
-        art,
+        { class: 'showcase' },
+        h('div', { class: 'showcase__card' }, card),
         h(
           'div',
-          { class: 'detail-info' },
+          { class: 'showcase__info' },
+          h('div', { class: 'showcase__set' }, `${(API.peekSets().find((x) => x.id === meta.s) || { name: meta.s }).name} · #${meta.no}`),
           h('h2', null, meta.n),
-          h('div', { class: 'muted' }, `#${meta.no} · ${meta.r || 'No rarity'}`),
-          h('div', { class: 'row wrap' }, PP.ui.tierBadge(tier)),
+          h('div', { class: 'row wrap' }, ui.rarityEl(tier), meta.r && meta.r !== E.TIER_LABEL[tier] ? ui.chip(meta.r) : null),
+          h('div', { class: 'showcase__value' }, h('span', null, 'Market value'), h('b', null, U.money(copies[0].price))),
           rows,
-          h('p', { class: 'muted small' }, `Market prices from TCGplayer via pokemontcg.io, updated ${new Date(meta.t || Date.now()).toLocaleDateString()}.`)
+          copies.length > 1 || copies[0].n > 1 ? h('div', { class: 'kv' }, h('span', null, 'All copies'), h('b', null, U.money(total))) : null,
+          h('p', { class: 'muted small' }, `TCGplayer market prices via pokemontcg.io · updated ${new Date(meta.t || Date.now()).toLocaleDateString()}`)
         )
-      )
+      ),
+      { dark: true, wide: true, cls: `tier-${tier}` }
     );
   }
 
   function sellAndRefresh(id, key, qty) {
     const gain = G.sell(key, qty);
+    sfx.sell();
     toast(`Sold for ${U.money(gain)}`, 'good');
     if (G.copiesOf(id).length) showCard(id);
     else closeModal();
     if (currentRoute().name === 'binder' && redrawBinder) redrawBinder();
-    if (currentRoute().name === 'collection') render();
+    if (currentRoute().name === 'collection' && drawCollection) drawCollection();
   }
 
   // ---- collection --------------------------------------------------------
 
-  const colPrefs = { sort: 'value', q: '', limit: 120 };
+  const colPrefs = { sort: 'value', q: '', tier: 'all', limit: 120 };
+  let drawCollection = null;
+  const TIER_FILTERS = [
+    ['all', 'All'],
+    ['RH', 'Holo+'],
+    ['DR', 'Double Rare+'],
+    ['IR', 'Illustration+'],
+    ['UR', 'Ultra+'],
+    ['SR', 'Secret'],
+  ];
 
   function renderCollection(v) {
     const all = G.entries();
     const totalCards = all.reduce((s, e) => s + e.n, 0);
     v.append(
-      h(
-        'div',
-        { class: 'view-head' },
-        h('div', null, h('h1', null, 'Collection'), h('p', { class: 'muted' }, `${totalCards} cards · ${new Set(all.map((e) => e.id)).size} unique · worth `, h('b', { 'data-bind': 'value' }, U.money(G.collectionValue()))))
+      pageHead(
+        'Collection',
+        null,
+        h(
+          'div',
+          { class: 'head-stats' },
+          h('div', null, h('span', null, 'Cards'), h('b', null, totalCards.toLocaleString())),
+          h('div', null, h('span', null, 'Unique'), h('b', null, new Set(all.map((e) => e.id)).size.toLocaleString())),
+          h('div', { class: 'is-accent' }, h('span', null, 'Value'), h('b', { 'data-bind': 'value' }, U.money(G.collectionValue())))
+        )
       )
     );
     if (!all.length) {
@@ -432,77 +718,84 @@
       return;
     }
 
-    const dupes = G.duplicateItems();
-    const cheapInput = h('input', { type: 'number', min: '0', step: '0.25', value: '0.50', class: 'input narrow' });
+    const cheapInput = h('input', { type: 'number', min: '0', step: '0.25', value: '0.50', class: 'input input--narrow', 'aria-label': 'Price limit' });
+    const chips = h(
+      'div',
+      { class: 'filter-chips' },
+      TIER_FILTERS.map(([key, label]) => h('button', { class: 'fchip' + (colPrefs.tier === key ? ' is-on' : ''), onclick: (e) => ((colPrefs.tier = key), [...chips.children].forEach((c) => c.classList.toggle('is-on', c === e.currentTarget)), draw()) }, label))
+    );
     v.append(
       h(
         'div',
         { class: 'toolbar' },
-        h('input', {
-          class: 'input',
-          type: 'search',
-          placeholder: 'Search cards…',
-          value: colPrefs.q,
-          oninput: (e) => ((colPrefs.q = e.target.value), drawList()),
-        }),
+        h('label', { class: 'search' }, ui.icon('search'), h('input', { type: 'search', placeholder: 'Search your cards', value: colPrefs.q, oninput: (e) => ((colPrefs.q = e.target.value), draw()) })),
         h(
           'select',
-          { class: 'input', onchange: (e) => ((colPrefs.sort = e.target.value), drawList()) },
+          { class: 'input', onchange: (e) => ((colPrefs.sort = e.target.value), draw()) },
           [
             ['value', 'Most valuable'],
             ['recent', 'Recently pulled'],
-            ['name', 'Name'],
             ['rarity', 'Rarity'],
+            ['name', 'Name'],
           ].map(([val, label]) => h('option', { value: val, selected: colPrefs.sort === val }, label))
         ),
         h(
-          'button',
-          {
-            class: 'btn',
-            disabled: !dupes.length,
-            onclick: () => {
-              const items = G.duplicateItems();
-              confirmBox(`Sell ${items.reduce((s, i) => s + i[1], 0)} duplicate cards for ${U.money(G.itemsValue(items))}? You keep one of each card (the most valuable printing).`, 'Sell duplicates', () => {
-                const r = G.sellMany(items);
-                toast(`Sold ${r.count} cards for ${U.money(r.gain)}`, 'good');
-                render();
-              });
-            },
-          },
-          'Sell duplicates'
-        ),
-        h(
           'div',
-          { class: 'row' },
-          h('span', { class: 'muted small' }, 'Sell all under $'),
-          cheapInput,
+          { class: 'toolbar__sell' },
           h(
             'button',
             {
-              class: 'btn',
+              class: 'btn btn--sm',
               onclick: () => {
-                const max = Number(cheapInput.value) || 0;
-                const items = G.cheapItems(max);
-                if (!items.length) return toast(`Nothing under ${U.money(max)}.`);
-                confirmBox(`Sell ${items.reduce((s, i) => s + i[1], 0)} cards worth less than ${U.money(max)} each, for ${U.money(G.itemsValue(items))}?`, 'Sell', () => {
+                const items = G.duplicateItems();
+                if (!items.length) return toast('No duplicates to sell.');
+                confirmBox('Sell duplicates?', `Sell ${items.reduce((s, i) => s + i[1], 0)} extra copies for ${U.money(G.itemsValue(items))}. You keep one of each card, the most valuable printing.`, 'Sell duplicates', () => {
                   const r = G.sellMany(items);
+                  sfx.coin();
                   toast(`Sold ${r.count} cards for ${U.money(r.gain)}`, 'good');
                   render();
                 });
               },
             },
-            'Sell'
+            ui.icon('tag'),
+            'Sell duplicates'
+          ),
+          h(
+            'div',
+            { class: 'under' },
+            h('span', null, 'Sell all under $'),
+            cheapInput,
+            h(
+              'button',
+              {
+                class: 'btn btn--sm',
+                onclick: () => {
+                  const max = Number(cheapInput.value) || 0;
+                  const items = G.cheapItems(max);
+                  if (!items.length) return toast(`Nothing under ${U.money(max)}.`);
+                  confirmBox('Bulk sell?', `Sell ${items.reduce((s, i) => s + i[1], 0)} cards worth less than ${U.money(max)} each, for ${U.money(G.itemsValue(items))}.`, 'Sell', () => {
+                    const r = G.sellMany(items);
+                    sfx.coin();
+                    toast(`Sold ${r.count} cards for ${U.money(r.gain)}`, 'good');
+                    render();
+                  });
+                },
+              },
+              'Sell'
+            )
           )
         )
-      )
+      ),
+      chips
     );
     const grid = h('div', { class: 'card-grid' });
     const more = h('div', { class: 'center' });
     v.append(grid, more);
 
-    const drawList = () => {
+    const draw = () => {
       const q = colPrefs.q.trim().toLowerCase();
-      let list = G.entries().filter((e) => e.meta && (!q || e.meta.n.toLowerCase().includes(q)));
+      const min = colPrefs.tier === 'all' ? -1 : E.tierRank(colPrefs.tier);
+      const list = G.entries().filter((e) => e.meta && (!q || e.meta.n.toLowerCase().includes(q)) && E.tierRank(E.tierOf(e.meta.r)) >= min);
       const sorts = {
         value: (a, b) => b.price - a.price,
         recent: (a, b) => (b.at || 0) - (a.at || 0),
@@ -511,34 +804,39 @@
       };
       list.sort(sorts[colPrefs.sort]);
       grid.innerHTML = '';
-      list.slice(0, colPrefs.limit).forEach((e) => {
+      if (!list.length) grid.append(h('p', { class: 'muted center span-all' }, 'No cards match.'));
+      list.slice(0, colPrefs.limit).forEach((e, i) => {
         const tier = E.tierOf(e.meta.r);
+        const card = C.cardEl(e.meta, { variant: e.v, tier, interactive: true });
         grid.append(
           h(
             'div',
-            { class: `col-card tier-${tier}` + (PP.ui.isShiny(tier, e.v) ? ' shiny' : '') },
-            h('button', { class: 'col-img', onclick: () => showCard(e.id) }, PP.ui.cardImg(e.meta), e.n > 1 ? h('span', { class: 'count' }, `×${e.n}`) : null),
-            h('div', { class: 'sum-name', title: e.meta.n }, e.meta.n),
-            h('div', { class: 'sum-sub' }, E.variantLabel(e.v)),
+            { class: `ctile tier-${tier}`, style: `--d:${Math.min(i, 24) * 20}ms` },
+            h('button', { class: 'ctile__card', onclick: () => showCard(e.id), 'aria-label': e.meta.n }, card, e.n > 1 ? h('span', { class: 'count' }, `×${e.n}`) : null),
+            h('div', { class: 'ctile__name', title: e.meta.n }, e.meta.n),
+            h('div', { class: 'ctile__meta' }, [ui.rarityEl(tier, { short: true }), ui.variantChip(e.v)].filter(Boolean)),
             h(
               'button',
               {
-                class: 'btn small',
+                class: 'btn btn--sm btn--sell',
                 onclick: () => {
                   const gain = G.sell(e.key, 1);
+                  sfx.sell();
                   toast(`Sold ${e.meta.n} for ${U.money(gain)}`, 'good');
-                  drawList();
+                  draw();
                 },
               },
-              `Sell ${U.money(e.price)}`
+              ui.icon('tag'),
+              U.money(e.price)
             )
           )
         );
       });
       more.innerHTML = '';
-      if (list.length > colPrefs.limit) more.append(h('button', { class: 'btn ghost', onclick: () => ((colPrefs.limit += 120), drawList()) }, `Show more (${list.length - colPrefs.limit} left)`));
+      if (list.length > colPrefs.limit) more.append(h('button', { class: 'btn', onclick: () => ((colPrefs.limit += 120), draw()) }, `Show more (${list.length - colPrefs.limit} left)`));
     };
-    drawList();
+    drawCollection = draw;
+    draw();
   }
 
   // ---- profile -----------------------------------------------------------
@@ -546,46 +844,55 @@
   function renderProfile(v) {
     const s = G.state.stats;
     const best = s.best;
-    v.append(h('div', { class: 'view-head' }, h('div', null, h('h1', null, 'Profile'), h('p', { class: 'muted' }, 'Stats, settings and your save file.'))));
+    v.append(pageHead('Profile', 'Your stats, settings and save file.'));
+    const stat = (ico, label, value, cls = '') => h('div', { class: 'stat ' + cls }, ui.icon(ico), h('span', null, label), h('b', null, value));
     v.append(
       h(
         'div',
         { class: 'stat-grid' },
-        stat('Wallet', h('span', { 'data-bind': 'money' }, U.money(G.state.money))),
-        stat('Collection value', h('span', { 'data-bind': 'value' }, U.money(G.collectionValue()))),
-        stat('Packs opened', s.packs.toLocaleString()),
-        stat('Spent on packs', U.money(s.spent)),
-        stat('Earned from sales', U.money(s.earned)),
-        stat('Cards sold', s.sold.toLocaleString()),
-        stat('Income collected', U.money(s.income))
+        stat('cards', 'Wallet', h('span', { 'data-bind': 'money' }, U.money(G.state.money)), 'is-accent'),
+        stat('binder', 'Collection value', h('span', { 'data-bind': 'value' }, U.money(G.collectionValue()))),
+        stat('gift', 'Packs opened', s.packs.toLocaleString()),
+        stat('shop', 'Spent on packs', U.money(s.spent)),
+        stat('tag', 'Earned from sales', U.money(s.earned)),
+        stat('chart', 'Cards sold', s.sold.toLocaleString()),
+        stat('sparkle', 'Unique cards', new Set(G.entries().map((e) => e.id)).size.toLocaleString()),
+        stat('clock', 'Income collected', U.money(s.income))
       )
     );
+    const cols = h('div', { class: 'profile-cols' });
+    v.append(cols);
     if (best) {
-      v.append(
+      const card = C.cardEl({ n: best.name, img: best.img, big: best.big, r: best.r }, { variant: best.v, big: true, interactive: true, auto: true });
+      cols.append(
         h(
-          'div',
+          'section',
           { class: 'panel best' },
-          h('img', { src: best.img, alt: best.name }),
-          h('div', null, h('div', { class: 'muted small' }, 'Best pull'), h('h2', null, best.name), h('div', null, `${E.variantLabel(best.v)} · ${best.set}`), h('div', { class: 'big-num' }, U.money(best.price)))
+          h('div', { class: 'best__card' }, card),
+          h('div', null, h('span', { class: 'eyebrow' }, ui.icon('trophy'), 'Best pull'), h('h2', null, best.name), h('p', { class: 'muted' }, `${E.variantLabel(best.v)} · ${best.set}`), h('div', { class: 'big-num' }, U.money(best.price)))
         )
       );
     }
     if (G.state.log.length) {
-      v.append(
+      cols.append(
         h(
-          'div',
+          'section',
           { class: 'panel' },
           h('h3', null, 'Recent packs'),
-          G.state.log.slice(0, 10).map((l) => {
-            const diff = U.round2(l.value - l.paid);
-            return h('div', { class: 'kv' }, h('span', null, `${l.name} · ${new Date(l.t).toLocaleString()}`), h('b', { class: diff >= 0 ? 'good' : 'bad' }, `${U.money(l.paid)} → ${U.money(l.value)}`));
-          })
+          h(
+            'div',
+            { class: 'log' },
+            G.state.log.slice(0, 10).map((l) => {
+              const diff = U.round2(l.value - l.paid);
+              return h('div', { class: 'log__row' }, h('div', null, h('b', null, l.name), h('div', { class: 'muted small' }, new Date(l.t).toLocaleString())), h('div', { class: 'log__val ' + (diff >= 0 ? 'good' : 'bad') }, `${diff >= 0 ? '+' : '−'}${U.money(Math.abs(diff))}`));
+            })
+          )
         )
       );
     }
 
     const settings = API.settings();
-    const keyInput = h('input', { class: 'input', type: 'password', placeholder: 'Optional pokemontcg.io API key', value: settings.apiKey || '' });
+    const keyInput = h('input', { class: 'input', type: 'password', placeholder: 'Optional', value: settings.apiKey || '', autocomplete: 'off' });
     const baseInput = h('input', { class: 'input', placeholder: API.DEFAULT_BASE, value: settings.apiBase || '' });
     const fileInput = h('input', {
       type: 'file',
@@ -603,94 +910,96 @@
         }
       },
     });
+    const soundToggle = h('label', { class: 'switch' }, h('input', { type: 'checkbox', checked: !sfx.muted, onchange: () => (sfx.toggle(), updateSoundBtn()) }), h('span', { class: 'switch__track' }), 'Sound effects');
     v.append(
       h(
         'div',
-        { class: 'panel' },
-        h('h3', null, 'Card data'),
-        h('p', { class: 'muted small' }, 'Card images and prices come from the free pokemontcg.io API. A free key from dev.pokemontcg.io raises the rate limit.'),
-        h('label', { class: 'field' }, 'API key', keyInput),
-        h('label', { class: 'field' }, 'API base URL', baseInput),
+        { class: 'settings' },
         h(
-          'div',
-          { class: 'row wrap' },
+          'section',
+          { class: 'panel' },
+          h('h3', null, 'Card data'),
+          h('p', { class: 'muted small' }, 'Cards, images and prices come from the free pokemontcg.io API. A free key from dev.pokemontcg.io raises the rate limit.'),
+          h('label', { class: 'field' }, h('span', null, 'API key'), keyInput),
+          h('label', { class: 'field' }, h('span', null, 'API base URL'), baseInput),
           h(
-            'button',
-            {
-              class: 'btn primary',
-              onclick: () => {
-                API.saveSettings({ apiKey: keyInput.value.trim(), apiBase: baseInput.value.trim() });
-                toast('Settings saved', 'good');
+            'div',
+            { class: 'row wrap' },
+            h(
+              'button',
+              {
+                class: 'btn btn--primary',
+                onclick: () => {
+                  API.saveSettings({ apiKey: keyInput.value.trim(), apiBase: baseInput.value.trim() });
+                  toast('Settings saved', 'good');
+                },
               },
-            },
-            'Save settings'
-          ),
-          h(
-            'button',
-            {
-              class: 'btn',
-              onclick: async (e) => {
-                e.target.disabled = true;
-                const n = await refreshPrices(0);
-                e.target.disabled = false;
-                toast(n == null ? 'Price refresh failed, try again later.' : `Refreshed prices for ${n} cards`, n == null ? 'bad' : 'good');
-                render();
+              'Save'
+            ),
+            h(
+              'button',
+              {
+                class: 'btn',
+                onclick: async (e) => {
+                  const b = e.currentTarget;
+                  b.disabled = true;
+                  const n = await refreshPrices(0);
+                  b.disabled = false;
+                  toast(n == null ? 'Price refresh failed, try again later.' : `Refreshed prices for ${n} cards`, n == null ? 'bad' : 'good');
+                  render();
+                },
               },
-            },
-            'Refresh my card prices'
-          ),
-          h('button', { class: 'btn ghost', onclick: () => (API.clearCache(), modelCache.clear(), toast('Card data cache cleared')) }, 'Clear card cache')
-        )
-      ),
-      h(
-        'div',
-        { class: 'panel' },
-        h('h3', null, 'Save file'),
-        h('p', { class: 'muted small' }, 'Progress lives in this browser. Export a backup to move it to another device.'),
+              ui.icon('refresh'),
+              'Refresh my prices'
+            ),
+            h('button', { class: 'btn btn--ghost', onclick: () => (API.clearCache(), modelCache.clear(), toast('Card data cache cleared')) }, 'Clear cache')
+          )
+        ),
         h(
-          'div',
-          { class: 'row wrap' },
+          'section',
+          { class: 'panel' },
+          h('h3', null, 'Preferences'),
+          soundToggle,
+          h('h3', { class: 'mt' }, 'Save file'),
+          h('p', { class: 'muted small' }, 'Progress lives in this browser. Export a backup to move it to another device.'),
           h(
-            'button',
-            {
-              class: 'btn',
-              onclick: () => {
-                const blob = new Blob([G.exportSave()], { type: 'application/json' });
-                const a = h('a', { href: URL.createObjectURL(blob), download: `pack-rush-save-${new Date().toISOString().slice(0, 10)}.json` });
-                a.click();
-                setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+            'div',
+            { class: 'row wrap' },
+            h(
+              'button',
+              {
+                class: 'btn',
+                onclick: () => {
+                  const blob = new Blob([G.exportSave()], { type: 'application/json' });
+                  const a = h('a', { href: URL.createObjectURL(blob), download: `pack-rush-save-${new Date().toISOString().slice(0, 10)}.json` });
+                  a.click();
+                  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+                },
               },
-            },
-            'Export save'
-          ),
-          h('button', { class: 'btn', onclick: () => fileInput.click() }, 'Import save'),
-          fileInput,
-          h('button', { class: 'btn danger', onclick: () => confirmBox('Erase all progress and start over with $50?', 'Reset', () => (G.reset(), render())) }, 'Reset progress')
-        )
-      ),
-      h(
-        'div',
-        { class: 'panel' },
-        h('h3', null, 'How it works'),
+              ui.icon('download'),
+              'Export'
+            ),
+            h('button', { class: 'btn', onclick: () => fileInput.click() }, ui.icon('upload'), 'Import'),
+            fileInput,
+            h('button', { class: 'btn btn--danger', onclick: () => confirmBox('Reset progress?', 'This erases your cards and money and starts you over with $50.', 'Reset', () => (G.reset(), render())) }, 'Reset')
+          )
+        ),
         h(
-          'ul',
-          { class: 'small how' },
-          h('li', null, `You earn $${G.INCOME} every hour, even while away (up to ${G.CAP_HOURS} hours banked).`),
-          h('li', null, 'The shop shows 8 packs from across Pokémon TCG history and restocks every 12 hours (midnight and noon UTC).'),
-          h('li', null, 'Card values are real TCGplayer market prices for that exact printing (normal, holo, reverse holo). Selling pays that market price.'),
-          h('li', null, 'Pack price = (expected value of its cards × 1.2 + $1) × sealed age premium, where the premium is 1 + 0.004 × years^2.6. Then rounded and capped to $1–$500.'),
-          h('li', null, 'Pull rates approximate each era: 11-card WOTC packs with 1-in-3 holos, 10-card modern packs with a reverse holo slot, and Scarlet & Violet packs with an extra illustration-rare slot.')
+          'section',
+          { class: 'panel span-2' },
+          h('h3', null, 'How it works'),
+          h(
+            'ul',
+            { class: 'how' },
+            h('li', null, `You earn $${G.INCOME} every hour, even while away (up to ${G.CAP_HOURS} hours banked).`),
+            h('li', null, `The shop always stocks the newest set, plus 12 rotating packs from across the game’s history and a mystery pack. The rotation changes every 12 hours (midnight and noon UTC). Bundles of ${E.BUNDLE_SIZE} save ${Math.round(E.BUNDLE_DISCOUNT * 100)}%.`),
+            h('li', null, 'Card values are real TCGplayer market prices for that exact printing (normal, holo, reverse holo). Selling pays that market price.'),
+            h('li', null, 'Pack price = (expected value of its cards × 1.2 + $1) × sealed age premium (1 + 0.004 × years^2.6), rounded and kept between $1 and $500.'),
+            h('li', null, 'Pull rates approximate each era: 11-card WOTC packs with 1-in-3 holos, 10-card modern packs with a reverse holo slot, Scarlet & Violet packs with an extra illustration-rare slot, and 4-card packs for small special sets.')
+          )
         )
       )
     );
-  }
-
-  function stat(label, value) {
-    return h('div', { class: 'stat' }, h('div', { class: 'muted small' }, label), h('div', { class: 'big-num' }, value));
-  }
-
-  function emptyState(title, text) {
-    return h('div', { class: 'empty' }, h('div', { class: 'empty-art' }, PP.ui.cardBack()), h('h2', null, title), h('p', { class: 'muted' }, text), h('a', { class: 'btn primary', href: '#shop' }, 'Go to the shop'));
   }
 
   // ---- background price refresh -----------------------------------------
@@ -710,14 +1019,18 @@
   // ---- boot --------------------------------------------------------------
 
   function boot() {
-    document.querySelectorAll('#tabs button').forEach((b) => b.addEventListener('click', () => (location.hash = b.dataset.view)));
+    document.querySelectorAll('#tabs [data-view]').forEach((b) =>
+      b.addEventListener('click', () => {
+        sfx.tap();
+        location.hash = b.dataset.view;
+      })
+    );
+    document.getElementById('soundBtn').addEventListener('click', () => (sfx.toggle(), updateSoundBtn()));
     document.getElementById('modal').addEventListener('click', (e) => e.target.id === 'modal' && closeModal());
-    document.addEventListener('keydown', (e) => e.key === 'Escape' && closeModal());
+    document.addEventListener('keydown', (e) => e.key === 'Escape' && document.body.classList.contains('modal-open') && closeModal());
     window.addEventListener('hashchange', () => (closeModal(), render()));
-    G.onChange(() => {
-      updateHeader();
-      document.querySelectorAll('.shop-tile').forEach((t) => t._refresh && t._refresh());
-    });
+    G.onChange(updateHeader);
+    updateSoundBtn();
     updateHeader();
     tick();
     setInterval(tick, 1000);
@@ -725,7 +1038,7 @@
     setTimeout(() => refreshPrices(), 4000);
   }
 
-  Object.assign(PP.ui, { toast, render, showCard });
+  Object.assign(ui, { toast, render, showCard, closeModal });
   if (typeof document !== 'undefined') {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
     else boot();

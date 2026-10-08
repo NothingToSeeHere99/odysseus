@@ -171,6 +171,11 @@
     });
   }
 
+  function peekSets() {
+    const e = cacheEntry('sets');
+    return e ? e.d : [];
+  }
+
   function peekSetCards(setId) {
     const e = cacheEntry('cards.' + setId);
     return e ? e.d : null;
@@ -187,5 +192,5 @@
     return out;
   }
 
-  PP.api = { DEFAULT_BASE, settings, saveSettings, getSets, getSetCards, peekSetCards, getCardsByIds, clearCache, compactCard, compactSet };
+  PP.api = { DEFAULT_BASE, settings, saveSettings, getSets, getSetCards, peekSets, peekSetCards, getCardsByIds, clearCache, compactCard, compactSet };
 })(typeof window !== 'undefined' ? window : globalThis);
