@@ -390,6 +390,106 @@
     return U.round2(gradeOdds(card, variant, era).reduce((s, o) => s + o.p * o.value, 0));
   }
 
+  // ---- earning: daily missions, collector requests, set rewards -------------
+
+  const DAY_MS = 24 * PP.HOUR;
+  const dayIndex = (now) => Math.floor(now / DAY_MS);
+
+  // Each template makes one mission; three different ones are drawn per (UTC) day.
+  const MISSIONS = [
+    (r) => { const t = [3, 5, 8][Math.floor(r() * 3)]; return { type: 'packs', target: t, reward: t * 4, label: `Open ${t} packs` }; },
+    () => ({ type: 'pull', tier: 'RH', target: 1, reward: 10, label: 'Pull a Holo Rare or better' }),
+    () => ({ type: 'pull', tier: 'DR', target: 1, reward: 25, label: 'Pull a Double Rare or better' }),
+    () => ({ type: 'pull', tier: 'UR', target: 1, reward: 60, label: 'Pull an Ultra Rare or better' }),
+    () => ({ type: 'oldpack', target: 1, reward: 20, label: 'Open a pack from before 2011' }),
+    (r) => { const t = [5, 10, 20][Math.floor(r() * 3)]; return { type: 'new', target: t, reward: Math.round(t * 1.5), label: `Add ${t} new cards to your binder` }; },
+    (r) => { const t = [5, 15, 40][Math.floor(r() * 3)]; return { type: 'sell', target: t, reward: { 5: 8, 15: 15, 40: 25 }[t], label: `Sell $${t} worth of cards`, money: true }; },
+    () => ({ type: 'grade', target: 1, reward: 15, label: 'Send a card for grading' }),
+    () => ({ type: 'bundle', target: 1, reward: 30, label: 'Open a 6-pack bundle' }),
+    () => ({ type: 'mystery', target: 1, reward: 12, label: 'Open a mystery pack' }),
+    () => ({ type: 'request', target: 1, reward: 15, label: 'Fill a collector request' }),
+  ];
+  const DAILY_BONUS = 25;
+
+  function dailyMissions(day) {
+    const rng = U.mulberry32(U.hashStr('packrush-day-' + day));
+    const picks = U.shuffle(MISSIONS.map((_, i) => i), rng);
+    const out = [];
+    const seen = new Set();
+    for (const i of picks) {
+      const m = MISSIONS[i](rng);
+      const kind = m.type === 'pull' ? 'pull' : m.type;
+      if (seen.has(kind)) continue; // at most one "pull" mission a day
+      seen.add(kind);
+      out.push({ id: `${day}-${out.length}`, ...m, progress: 0, claimed: false });
+      if (out.length === 3) break;
+    }
+    return out;
+  }
+
+  // One-time rewards for collecting 25/50/75/100% of a set, scaled by its size.
+  const MILESTONES = [
+    [0.25, 0.1],
+    [0.5, 0.25],
+    [0.75, 0.5],
+    [1, 1.5],
+  ];
+  function setMilestones(total) {
+    return MILESTONES.map(([share, perCard], i) => ({ level: i + 1, share, need: Math.max(1, Math.ceil(total * share)), reward: Math.max(2, Math.round(total * perCard)) }));
+  }
+
+  // Collectors want specific cards: some from this rotation's packs (premium 1.4–2x),
+  // some you already own (1.2–1.5x). Same rotation, same requests.
+  function requestOffer(card, mult) {
+    return U.round2(Math.max(0.25, mult * priceOf(card, variantFor(card, 'rare', tierOf(card)))));
+  }
+
+  function collectorRequests(rotation, models, ownedCards) {
+    const rng = U.mulberry32(U.hashStr('packrush-requests-' + rotation));
+    const out = [];
+    const used = new Set();
+    const shopPool = [];
+    for (const m of models.slice().sort((a, b) => (a.set.id < b.set.id ? -1 : 1))) {
+      for (const c of m.pools.ALL) {
+        const v = cardValue(c);
+        if (tierRank(tierOf(c)) >= tierRank('RH') && v >= 1 && v <= 250) shopPool.push({ card: c, set: m.set });
+      }
+    }
+    for (const { card, set } of U.shuffle(shopPool, rng)) {
+      if (out.length >= 3) break;
+      if (used.has(card.id)) continue;
+      used.add(card.id);
+      const mult = U.round2(1.4 + rng() * 0.6);
+      out.push({ id: card.id, kind: 'shop', setName: set.name, card: { id: card.id, s: card.s, n: card.n, no: card.no, r: card.r, img: card.img, big: card.big, p: card.p }, mult });
+    }
+    const owned = ownedCards.filter((c) => !used.has(c.id) && priceOf(c, variantFor(c, 'rare', tierOf(c))) >= 1).sort((a, b) => (a.id < b.id ? -1 : 1));
+    for (const card of U.shuffle(owned, rng).slice(0, 2)) {
+      used.add(card.id);
+      const mult = U.round2(1.2 + rng() * 0.3);
+      out.push({ id: card.id, kind: 'owned', card: { id: card.id, s: card.s, n: card.n, no: card.no, r: card.r, img: card.img, big: card.big, p: card.p }, mult });
+    }
+    return out;
+  }
+
+  // "Higher or lower" minigame: guess which of two real cards is worth more.
+  // Small payouts that grow with a streak, capped per day.
+  const GUESS_CAP = 15;
+  const guessReward = (streak) => U.round2(Math.min(2, 0.25 * streak));
+
+  // Two cards worth at least 25¢ whose prices differ by 20% or more.
+  function guessPair(cards, rng = Math.random) {
+    const pool = cards.filter((c) => cardValue(c) >= 0.25);
+    for (let tries = 0; tries < 60 && pool.length > 1; tries++) {
+      const a = pool[Math.floor(rng() * pool.length)];
+      const b = pool[Math.floor(rng() * pool.length)];
+      if (a.id === b.id || a.n === b.n) continue;
+      const va = cardValue(a);
+      const vb = cardValue(b);
+      if (Math.max(va, vb) >= Math.min(va, vb) * 1.2) return [a, b];
+    }
+    return null;
+  }
+
   // ---- shop --------------------------------------------------------------
 
   const EXCLUDE = /trainer gallery|galarian gallery|shiny vault|futsal|trainer kit|energies|classic collection/i;
@@ -481,6 +581,15 @@
     featuredSet,
     shopSets,
     mysteryPrice,
+    dayIndex,
+    dailyMissions,
+    DAILY_BONUS,
+    setMilestones,
+    collectorRequests,
+    requestOffer,
+    GUESS_CAP,
+    guessReward,
+    guessPair,
     GRADE_NAMES,
     GRADE_ODDS,
     ERA_LABEL,

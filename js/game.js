@@ -19,8 +19,12 @@
       anchor: Date.now(),
       cards: {}, // "cardId|variant" (raw) or "cardId|variant|gN" (graded) -> { id, v, n, at, g?, era? }
       meta: {}, // cardId -> compact card (name, images, prices) + t (price timestamp)
-      stats: { packs: 0, spent: 0, sold: 0, earned: 0, income: 0, best: null, graded: 0, gradingSpent: 0, bestGrade: null },
+      stats: { packs: 0, spent: 0, sold: 0, earned: 0, income: 0, best: null, graded: 0, gradingSpent: 0, bestGrade: null, rewards: 0 },
       grading: [], // cards at the grader: { uid, id, v, era, speed, fee, sent, ready, grade, cert }
+      daily: null, // { day, missions, bonusClaimed }
+      requests: null, // { rot, list: [{ id, kind, setName?, card, mult, done }] }
+      milestones: {}, // setId -> highest completion reward claimed (1-4)
+      guess: { day: null, earned: 0, streak: 0, best: 0, played: 0 }, // higher-or-lower minigame
       log: [],
     };
   }
@@ -108,6 +112,8 @@
   // ---- buying ------------------------------------------------------------
 
   function openOne(model, paid, now, label) {
+    const year = model.set && model.set.date ? U.yearOf(model.set.date) : 9999;
+    if (year < 2011) track('oldpack', 1);
     const pulls = E.openPack(model);
     let value = 0;
     for (const pull of pulls) {
@@ -124,6 +130,9 @@
       }
     }
     state.stats.packs += 1;
+    track('packs', 1);
+    track('new', pulls.filter((p) => p.isNew).length);
+    for (const p of pulls) track('pull', 1, p.tier || E.tierOf(p.card));
     state.log.unshift({ t: now, set: model.set.id, name: label || model.set.name, paid, value: U.round2(value) });
     return { pulls, paid, value: U.round2(value) };
   }
@@ -138,6 +147,8 @@
     const each = U.round2(price / count);
     const results = [];
     for (let i = 0; i < count; i++) results.push(openOne(model, each, now, label));
+    if (count > 1) track('bundle', 1);
+    if (/mystery/i.test(label || '')) track('mystery', 1);
     state.log = state.log.slice(0, 50);
     save();
     emit();
@@ -159,6 +170,7 @@
     state.money = U.round2(state.money + gain);
     state.stats.sold += qty;
     state.stats.earned = U.round2(state.stats.earned + gain);
+    track('sell', gain);
     return gain;
   }
 
@@ -234,6 +246,7 @@
       cert: String(Math.floor(1e7 + Math.random() * 9e7)),
     };
     state.grading.push(job);
+    track('grade', 1);
     state.stats.gradingSpent = U.round2((state.stats.gradingSpent || 0) + fee);
     save();
     emit();
@@ -280,6 +293,143 @@
     save();
     emit();
     return rawKey;
+  }
+
+  // ---- earning: daily missions, collector requests, set rewards ------------
+
+  function daily(now = Date.now()) {
+    const day = E.dayIndex(now);
+    if (!state.daily || state.daily.day !== day) state.daily = { day, missions: E.dailyMissions(day), bonusClaimed: false };
+    return state.daily;
+  }
+
+  // Count progress towards today's missions. Callers save.
+  function track(type, amount, tier) {
+    if (!amount) return;
+    for (const m of daily().missions) {
+      if (m.type !== type || m.claimed) continue;
+      if (type === 'pull' && E.tierRank(tier) < E.tierRank(m.tier)) continue;
+      m.progress = Math.min(m.target, U.round2(m.progress + amount));
+    }
+  }
+
+  function pay(amount) {
+    state.money = U.round2(state.money + amount);
+    state.stats.rewards = U.round2((state.stats.rewards || 0) + amount);
+  }
+
+  function claimMission(id) {
+    const m = daily().missions.find((x) => x.id === id);
+    if (!m) throw new Error('That mission has expired.');
+    if (m.claimed) throw new Error('Already claimed.');
+    if (m.progress < m.target) throw new Error('Not finished yet.');
+    m.claimed = true;
+    pay(m.reward);
+    save();
+    emit();
+    return m.reward;
+  }
+
+  function claimDailyBonus() {
+    const d = daily();
+    if (d.bonusClaimed) throw new Error('Already claimed.');
+    if (!d.missions.every((m) => m.claimed)) throw new Error('Claim all three missions first.');
+    d.bonusClaimed = true;
+    pay(E.DAILY_BONUS);
+    save();
+    emit();
+    return E.DAILY_BONUS;
+  }
+
+  // The rotation's requests are made once (the shop has to be loaded) and kept.
+  function requests(rot) {
+    return state.requests && state.requests.rot === rot ? state.requests.list : null;
+  }
+
+  function setRequests(rot, list) {
+    if (requests(rot)) return state.requests.list;
+    state.requests = { rot, list: list.map((r) => ({ ...r, done: false })) };
+    save();
+    return state.requests.list;
+  }
+
+  const requestPrice = (r) => E.requestOffer(state.meta[r.id] || r.card, r.mult);
+
+  // The cheapest raw copy you have of a requested card (slabs are never handed over).
+  function requestCopy(r) {
+    return entries()
+      .filter((e) => e.id === r.id && !e.g)
+      .sort((a, b) => a.price - b.price)[0] || null;
+  }
+
+  function fulfillRequest(id) {
+    const r = state.requests && state.requests.list.find((x) => x.id === id);
+    if (!r || r.done) throw new Error('That request is no longer open.');
+    const copy = requestCopy(r);
+    if (!copy) throw new Error(`You don't have ${r.card.n} yet.`);
+    const offer = requestPrice(r);
+    const e = state.cards[copy.key];
+    e.n -= 1;
+    if (e.n <= 0) {
+      delete state.cards[copy.key];
+      if (!owns(e.id)) delete state.meta[e.id];
+    }
+    r.done = true;
+    pay(offer);
+    state.stats.sold += 1;
+    track('request', 1);
+    save();
+    emit();
+    return offer;
+  }
+
+  // Completion rewards for a set of `total` cards: every reached, unclaimed level.
+  function milestoneStatus(setId, total) {
+    const s = setSummary()[setId];
+    const have = s ? s.unique.size : 0;
+    const claimed = state.milestones[setId] || 0;
+    const levels = E.setMilestones(Math.max(total, have)).map((l) => ({ ...l, claimed: l.level <= claimed, ready: l.level > claimed && have >= l.need }));
+    return { have, levels, claimable: levels.filter((l) => l.ready).reduce((a, l) => a + l.reward, 0) };
+  }
+
+  function claimMilestones(setId, total) {
+    const st = milestoneStatus(setId, total);
+    const ready = st.levels.filter((l) => l.ready);
+    if (!ready.length) throw new Error('Nothing to claim yet.');
+    state.milestones[setId] = ready[ready.length - 1].level;
+    pay(st.claimable);
+    save();
+    emit();
+    return st.claimable;
+  }
+
+  // Higher-or-lower: the answer is checked here, the prize is capped per day.
+  function guessState(now = Date.now()) {
+    const day = E.dayIndex(now);
+    const g = (state.guess = state.guess || { day: null, earned: 0, streak: 0, best: 0, played: 0 });
+    if (g.day !== day) Object.assign(g, { day, earned: 0 });
+    return g;
+  }
+
+  function guess(a, b, pickA) {
+    const g = guessState();
+    const va = E.cardValue(a);
+    const vb = E.cardValue(b);
+    const correct = pickA ? va >= vb : vb >= va;
+    g.played += 1;
+    let reward = 0;
+    if (correct) {
+      g.streak += 1;
+      g.best = Math.max(g.best, g.streak);
+      reward = U.round2(Math.max(0, Math.min(E.guessReward(g.streak), E.GUESS_CAP - g.earned)));
+      if (reward) {
+        g.earned = U.round2(g.earned + reward);
+        pay(reward);
+      }
+    } else g.streak = 0;
+    save();
+    emit();
+    return { correct, reward, streak: g.streak, earned: g.earned };
   }
 
   // ---- prices ------------------------------------------------------------
@@ -353,6 +503,18 @@
     gradingJobs,
     revealGrade,
     crack,
+    daily,
+    claimMission,
+    claimDailyBonus,
+    requests,
+    setRequests,
+    requestPrice,
+    requestCopy,
+    fulfillRequest,
+    milestoneStatus,
+    claimMilestones,
+    guessState,
+    guess,
     sell,
     sellMany,
     duplicateItems,

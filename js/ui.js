@@ -94,6 +94,7 @@
       toast(`${fresh.length > 1 ? `${fresh.length} cards are` : 'A card is'} back from the grader! Open your Collection to reveal.`, 'good');
       if (currentRoute().name === 'collection' && !document.body.classList.contains('no-scroll') && !document.body.classList.contains('modal-open')) render();
     }
+    earnTick(now);
     const left = G.nextIncomeIn(now);
     document.getElementById('incomeText').textContent = U.fmtDuration(left);
     document.getElementById('incomeRing').style.setProperty('--p', (1 - left / PP.HOUR).toFixed(4));
@@ -128,7 +129,7 @@
     v.innerHTML = '';
     v.className = 'view view--' + name;
     window.scrollTo(0, 0);
-    const views = { shop: renderShop, binder: arg ? (el, t) => renderBinderSet(el, t, arg) : renderBinder, collection: renderCollection, profile: renderProfile };
+    const views = { shop: renderShop, binder: arg ? (el, t) => renderBinderSet(el, t, arg) : renderBinder, collection: renderCollection, earn: renderEarn, profile: renderProfile };
     (views[name] || renderShop)(v, token);
   }
 
@@ -1167,6 +1168,351 @@
           'Clear cache'
         )
       )
+    );
+  }
+
+  // ---- earn ---------------------------------------------------------------
+
+  const notifiedMissions = new Set();
+  let earnBadgeAt = -1e9;
+  let shownDay = null;
+
+  function claimableMilestones() {
+    const sets = API.peekSets() || [];
+    const byId = Object.fromEntries(sets.map((s) => [s.id, s]));
+    return Object.keys(G.setSummary()).filter((id) => byId[id] && G.milestoneStatus(id, byId[id].total || 0).claimable > 0).length;
+  }
+
+  function earnCount(now = Date.now()) {
+    const d = G.daily(now);
+    let n = d.missions.filter((m) => !m.claimed && m.progress >= m.target).length;
+    if (!d.bonusClaimed && d.missions.every((m) => m.claimed)) n++;
+    const reqs = G.requests(E.rotationIndex(now)) || [];
+    n += reqs.filter((r) => !r.done && G.requestCopy(r)).length;
+    return n + claimableMilestones();
+  }
+
+  function earnTick(now) {
+    const d = G.daily(now);
+    if (shownDay != null && d.day !== shownDay && currentRoute().name === 'earn') render();
+    shownDay = d.day;
+    for (const m of d.missions) {
+      if (m.claimed || m.progress < m.target || notifiedMissions.has(m.id)) continue;
+      notifiedMissions.add(m.id);
+      // Don't interrupt a pack opening; the toast waits for the next tick after it closes.
+      if (document.body.classList.contains('no-scroll')) notifiedMissions.delete(m.id);
+      else toast(`Mission complete: ${m.label}. Claim ${U.money(m.reward)} on the Earn tab.`, 'good');
+    }
+    const t = performance.now();
+    if (t - earnBadgeAt < 2000) return;
+    earnBadgeAt = t;
+    const tab = document.querySelector('#tabs [data-view=earn]');
+    const n = earnCount(now);
+    if (tab) tab.dataset.badge = n ? String(n) : '';
+  }
+
+  function claimed(amount) {
+    sfx.coin();
+    toast(`+${U.money(amount)} reward`, 'good');
+    earnBadgeAt = -1e9;
+    render();
+  }
+
+  const progressBar = (p) => h('span', { class: 'odds-row__bar earn-bar' }, h('i', { style: `width:${(U.clamp(p, 0, 1) * 100).toFixed(1)}%` }));
+
+  function attempt(fn) {
+    try {
+      claimed(fn());
+    } catch (e) {
+      sfx.error();
+      toast(e.message, 'bad');
+    }
+  }
+
+  function renderEarn(v, token) {
+    const now = Date.now();
+    v.append(pageHead('Earn', 'More ways to make money besides selling cards and your hourly income.'));
+    const d = G.daily(now);
+    const dayEnd = (d.day + 1) * 24 * PP.HOUR;
+    const fmt = (m, x) => (m.money ? U.money(x) : String(x));
+    const allClaimed = d.missions.every((m) => m.claimed);
+    v.append(
+      h(
+        'section',
+        { class: 'panel earn-panel' },
+        h(
+          'div',
+          { class: 'earn-head' },
+          h('div', null, h('span', { class: 'eyebrow' }, ui.icon('sparkle'), 'Daily missions'), h('h2', null, 'Today’s missions'), h('p', { class: 'muted small' }, `Finish all three for a ${U.money(E.DAILY_BONUS)} bonus.`)),
+          h('div', { class: 'restock' }, ui.icon('clock'), h('div', null, h('span', { class: 'restock__label' }, 'New missions in'), h('b', { 'data-countdown': dayEnd }, U.fmtDuration(dayEnd - now))))
+        ),
+        h(
+          'div',
+          { class: 'missions' },
+          d.missions.map((m) => {
+            const done = m.progress >= m.target;
+            return h(
+              'div',
+              { class: 'mission' + (m.claimed ? ' is-claimed' : done ? ' is-done' : '') },
+              h('div', { class: 'mission__reward' }, U.money(m.reward)),
+              h('div', { class: 'mission__main' }, h('b', null, m.label), progressBar(m.progress / m.target), h('span', { class: 'muted small' }, `${fmt(m, m.progress)} / ${fmt(m, m.target)}`)),
+              m.claimed ? h('span', { class: 'chip' }, 'Claimed') : h('button', { class: 'btn btn--sm ' + (done ? 'btn--buy' : ''), disabled: !done, onclick: () => attempt(() => G.claimMission(m.id)) }, done ? 'Claim' : 'In progress')
+            );
+          })
+        ),
+        h(
+          'div',
+          { class: 'mission mission--bonus' + (d.bonusClaimed ? ' is-claimed' : allClaimed ? ' is-done' : '') },
+          h('div', { class: 'mission__reward' }, U.money(E.DAILY_BONUS)),
+          h('div', { class: 'mission__main' }, h('b', null, 'Daily bonus'), h('span', { class: 'muted small' }, `${d.missions.filter((m) => m.claimed).length} of 3 missions claimed`)),
+          d.bonusClaimed ? h('span', { class: 'chip' }, 'Claimed') : h('button', { class: 'btn btn--sm ' + (allClaimed ? 'btn--buy' : ''), disabled: !allClaimed, onclick: () => attempt(() => G.claimDailyBonus()) }, 'Claim bonus')
+        )
+      )
+    );
+
+    v.append(guessPanel(token));
+
+    const reqBox = h('div', { class: 'requests' }, loading('Finding collectors…'));
+    const rotEnd = E.rotationEndsAt(now);
+    v.append(
+      h(
+        'section',
+        { class: 'panel earn-panel' },
+        h(
+          'div',
+          { class: 'earn-head' },
+          h('div', null, h('span', { class: 'eyebrow' }, ui.icon('tag'), 'Collector requests'), h('h2', null, 'Collectors are looking for'), h('p', { class: 'muted small' }, 'They pay well above market price. Pull the card from this rotation’s packs, or hand over one you already have.')),
+          h('div', { class: 'restock' }, ui.icon('clock'), h('div', null, h('span', { class: 'restock__label' }, 'New requests in'), h('b', { 'data-countdown': rotEnd }, U.fmtDuration(rotEnd - now))))
+        ),
+        reqBox
+      )
+    );
+
+    const setBox = h('div', { class: 'set-rewards' }, loading('Checking your sets…'));
+    v.append(
+      h(
+        'section',
+        { class: 'panel earn-panel' },
+        h('div', { class: 'earn-head' }, h('div', null, h('span', { class: 'eyebrow' }, ui.icon('trophy'), 'Set rewards'), h('h2', null, 'Complete your sets'), h('p', { class: 'muted small' }, 'A one-time reward for collecting 25%, 50%, 75% and 100% of a set. Bigger sets pay more.'))),
+        setBox
+      )
+    );
+
+    fillRequests(reqBox, token, now);
+    fillSetRewards(setBox, token);
+  }
+
+  // This rotation's pack models (shared by collector requests and the minigame).
+  async function rotationModels(rot, now, token) {
+    const sets = await API.getSets();
+    const { featured, rotation } = E.shopSets(sets, now);
+    const all = [featured, ...rotation].filter(Boolean);
+    const queue = all.slice();
+    const models = [];
+    const worker = async () => {
+      while (queue.length && !stale(token)) {
+        const set = queue.shift();
+        try {
+          models.push(await getModel(set, rot));
+        } catch {}
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
+    return { models, complete: models.length === all.length };
+  }
+
+  async function loadRequests(rot, now, token) {
+    const have = G.requests(rot);
+    if (have) return have;
+    const { models, complete } = await rotationModels(rot, now, token);
+    if (stale(token) || !models.length) return null;
+    // Only the full lineup decides the requests (a failed set would change them).
+    const list = E.collectorRequests(rot, models, Object.values(G.state.meta));
+    return complete ? G.setRequests(rot, list) : list.map((r) => ({ ...r, done: false, temp: true }));
+  }
+
+  // ---- higher or lower minigame -------------------------------------------
+
+  function guessPanel(token) {
+    const now = Date.now();
+    const g = G.guessState(now);
+    const left = U.round2(E.GUESS_CAP - g.earned);
+    const btn = h('button', { class: 'btn btn--primary', onclick: () => playGuess(btn, token) }, ui.icon('cards'), 'Play');
+    return h(
+      'section',
+      { class: 'panel earn-panel guess-panel' },
+      h(
+        'div',
+        { class: 'earn-head' },
+        h('div', null, h('span', { class: 'eyebrow' }, ui.icon('chart'), 'Minigame'), h('h2', null, 'Higher or Lower'), h('p', { class: 'muted small' }, `Pick the card that sells for more. Each right answer pays ${U.money(E.guessReward(1))}, rising with your streak up to ${U.money(E.guessReward(99))}. Up to ${U.money(E.GUESS_CAP)} a day.`)),
+        btn
+      ),
+      h(
+        'div',
+        { class: 'guess-stats' },
+        h('div', null, h('span', { class: 'restock__label' }, 'Won today'), h('b', null, `${U.money(g.earned)} / ${U.money(E.GUESS_CAP)}`)),
+        h('div', null, h('span', { class: 'restock__label' }, 'Streak'), h('b', null, String(g.streak))),
+        h('div', null, h('span', { class: 'restock__label' }, 'Best streak'), h('b', null, String(g.best))),
+        left <= 0 ? h('span', { class: 'chip' }, 'Daily prize limit reached · play for fun') : null
+      )
+    );
+  }
+
+  async function playGuess(btn, token) {
+    btn.disabled = true;
+    const now = Date.now();
+    let pool = [];
+    try {
+      const { models } = await rotationModels(E.rotationIndex(now), now, token);
+      pool = models.flatMap((m) => m.pools.ALL);
+    } catch {}
+    btn.disabled = false;
+    pool = pool.concat(Object.values(G.state.meta));
+    if (!E.guessPair(pool)) {
+      toast('Not enough card data loaded yet. Try again in a moment.', 'bad');
+      return;
+    }
+    const round = () => {
+      const [a, b] = E.guessPair(pool);
+      const g = G.guessState();
+      const result = h('div', { class: 'guess__result' }, h('b', null, 'Which card is worth more?'), h('span', { class: 'muted small' }, `Streak ${g.streak} · next right answer pays ${U.money(Math.min(E.guessReward(g.streak + 1), Math.max(0, E.GUESS_CAP - g.earned)))}`));
+      let done = false;
+      const side = (card, isA) => {
+        const price = h('div', { class: 'guess__price' }, '?');
+        const el = h(
+          'button',
+          { class: 'guess__card' },
+          C.cardEl(card, { interactive: true, eager: true }),
+          h('div', { class: 'guess__name' }, h('b', null, card.n), h('span', { class: 'muted small' }, setName(card.s))),
+          price
+        );
+        el._price = price;
+        el._value = E.cardValue(card);
+        el.addEventListener('click', () => pick(isA));
+        return el;
+      };
+      const ca = side(a, true);
+      const cb = side(b, false);
+      const next = h('button', { class: 'btn btn--primary hidden', onclick: round }, 'Next pair');
+      const pick = (isA) => {
+        if (done) return;
+        done = true;
+        const res = G.guess(a, b, isA);
+        for (const el of [ca, cb]) {
+          el._price.textContent = U.money(el._value);
+          el.disabled = true;
+        }
+        const winner = E.cardValue(a) >= E.cardValue(b) ? ca : cb;
+        winner.classList.add('is-win');
+        (isA ? ca : cb).classList.add(res.correct ? 'is-right' : 'is-wrong');
+        if (res.correct) sfx.coin();
+        else sfx.error();
+        result.replaceChildren(
+          h('b', { class: res.correct ? 'good' : 'bad' }, res.correct ? (res.reward ? `Correct! +${U.money(res.reward)}` : 'Correct!') : 'Not quite. Streak reset.'),
+          h('span', { class: 'muted small' }, `Streak ${res.streak} · won today ${U.money(res.earned)} of ${U.money(E.GUESS_CAP)}`)
+        );
+        next.classList.remove('hidden');
+      };
+      openModal(h('div', { class: 'guess' }, h('span', { class: 'eyebrow' }, 'Higher or Lower'), h('div', { class: 'guess__cards' }, ca, h('div', { class: 'guess__vs' }, 'VS'), cb), result, h('div', { class: 'row end' }, h('button', { class: 'btn', onclick: () => (closeModal(), render()) }, 'Done'), next)), { wide: true });
+    };
+    round();
+  }
+
+  function setName(id) {
+    const s = (API.peekSets() || []).find((x) => x.id === id);
+    return s ? s.name : id || '';
+  }
+
+  async function fillRequests(box, token, now) {
+    const rot = E.rotationIndex(now);
+    let list;
+    try {
+      list = await loadRequests(rot, now, token);
+    } catch (e) {
+      if (stale(token)) return;
+      box.replaceChildren(h('p', { class: 'muted' }, 'Couldn’t reach the card database to find collectors.'), h('button', { class: 'btn btn--sm', onclick: render }, ui.icon('refresh'), 'Try again'));
+      return;
+    }
+    if (stale(token)) return;
+    if (!list || !list.length) {
+      box.replaceChildren(h('p', { class: 'muted' }, 'No collectors right now. Check back after the shop restocks.'));
+      return;
+    }
+    box.replaceChildren(
+      ...list.map((r) => {
+        const meta = G.state.meta[r.id] || r.card;
+        const market = E.priceOf(meta, E.variantFor(meta, 'rare', E.tierOf(meta)));
+        const offer = G.requestPrice(r);
+        const copy = G.requestCopy(r);
+        let action;
+        if (r.done) action = h('span', { class: 'chip chip--new' }, 'Sold');
+        else if (r.temp) action = h('span', { class: 'muted small' }, 'Loading the shop…');
+        else if (copy) action = h('button', { class: 'btn btn--buy btn--sm', onclick: () => attempt(() => G.fulfillRequest(r.id)) }, 'Sell to collector');
+        else action = h('a', { class: 'btn btn--sm', href: '#shop' }, ui.icon('shop'), 'Find in shop');
+        return h(
+          'div',
+          { class: 'request' + (r.done ? ' is-done' : '') },
+          h('div', { class: 'request__card', onclick: () => G.owns(r.id) && showCard(r.id) }, C.cardEl(meta, {})),
+          h(
+            'div',
+            { class: 'request__info' },
+            h('b', null, meta.n),
+            h('span', { class: 'muted small' }, r.kind === 'shop' ? `In ${r.setName} packs` : 'Already in your collection'),
+            h('div', { class: 'request__price' }, h('b', null, U.money(offer)), h('span', { class: 'muted small' }, `market ${U.money(market)} · +${Math.round((r.mult - 1) * 100)}%`)),
+            copy && !r.done && copy.v !== E.variantFor(meta, 'rare', E.tierOf(meta)) ? h('span', { class: 'muted small' }, `Takes your ${E.variantLabel(copy.v)} copy`) : null
+          ),
+          action
+        );
+      })
+    );
+  }
+
+  async function fillSetRewards(box, token) {
+    const summary = G.setSummary();
+    const ids = Object.keys(summary);
+    if (!ids.length) {
+      box.replaceChildren(h('p', { class: 'muted' }, 'Open some packs to start collecting sets.'));
+      return;
+    }
+    let sets = [];
+    try {
+      sets = await API.getSets();
+    } catch {}
+    if (stale(token)) return;
+    const byId = Object.fromEntries(sets.map((s) => [s.id, s]));
+    const rows = ids
+      .filter((id) => byId[id] && byId[id].total)
+      .map((id) => ({ set: byId[id], st: G.milestoneStatus(id, byId[id].total) }))
+      .sort((a, b) => b.st.claimable - a.st.claimable || b.st.have / b.set.total - a.st.have / a.set.total);
+    if (!rows.length) {
+      box.replaceChildren(h('p', { class: 'muted' }, 'Set details are still loading.'));
+      return;
+    }
+    box.replaceChildren(
+      ...rows.map(({ set, st }) => {
+        const total = Math.max(set.total, st.have);
+        const next = st.levels.find((l) => !l.claimed && !l.ready);
+        return h(
+          'div',
+          { class: 'set-reward', style: `--h:${ui.hueOf(set)}` },
+          h('div', { class: 'set-reward__logo' }, set.logo ? h('img', { src: set.logo, alt: '', loading: 'lazy' }) : null),
+          h(
+            'div',
+            { class: 'set-reward__main' },
+            h('div', { class: 'set-reward__title' }, h('b', null, set.name), h('span', { class: 'muted small' }, `${st.have} / ${total}`)),
+            h(
+              'div',
+              { class: 'set-reward__track' },
+              progressBar(st.have / total),
+              st.levels.map((l) => h('span', { class: 'set-reward__mark' + (l.claimed ? ' is-claimed' : l.ready ? ' is-ready' : ''), style: `left:${l.share * 100}%`, title: `${Math.round(l.share * 100)}%: ${U.money(l.reward)}` }))
+            ),
+            h('span', { class: 'muted small' }, next ? `Next: ${next.need} cards for ${U.money(next.reward)}` : st.claimable ? '' : 'Set complete!')
+          ),
+          st.claimable
+            ? h('button', { class: 'btn btn--buy btn--sm', onclick: () => attempt(() => G.claimMilestones(set.id, set.total)) }, 'Claim', h('span', { class: 'btn__price' }, U.money(st.claimable)))
+            : h('span', { class: 'chip' }, `${Math.round((st.have / total) * 100)}%`)
+        );
+      })
     );
   }
 

@@ -29,6 +29,17 @@ Progress is saved in the browser's local storage. To move it to another device, 
 - **Selling:** you can sell any card for its current market price from the pack results, the binder or the collection. You can also bulk-sell duplicates or every card under a price you choose.
 - **Binder:** a page-by-page binder for every set you own cards from. It shows the empty slots you still need and how complete each set is.
 
+### Earn tab
+
+Ways to make money besides selling cards and hourly income:
+
+- **Daily missions:** three missions a day (UTC), the same for every player. Examples: open 5 packs, pull a Double Rare or better, open a pack from before 2011, sell $15 of cards, send a card for grading. Each pays $8–$60. Claim all three for a **$25 bonus**.
+- **Collector requests:** up to five collectors per shop rotation want specific cards. Three are in this rotation's packs and pay 1.4–2× market price. Two are cards you already own (worth $1 or more) and pay 1.2–1.5×. Filling a request hands over your cheapest raw copy; slabs are never taken.
+- **Set rewards:** one-time payouts for collecting 25%, 50%, 75% and 100% of a set. They scale with set size: a 200-card set pays $20 / $50 / $100 / $300.
+- **Higher or Lower (minigame):** two real cards; pick the one that sells for more. A right answer pays $0.25, plus $0.25 per answer in a streak, up to $2. A wrong answer resets the streak. Prizes are capped at $15 a day, and you can keep playing for fun after that.
+
+The Earn tab shows a badge when something is ready to claim, and a toast pops up when you finish a mission.
+
 ### Grading
 
 Open any card in your collection and press **Grade** to send one copy to Pack Rush Grading (PRG), the game's stand-in for a real grading company:
