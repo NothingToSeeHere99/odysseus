@@ -1,0 +1,11 @@
+# Pack Rush keys. Copy this file to keys.txt (same folder) and paste your keys after the = signs.
+# The bundled server reads keys.txt every time it starts, so you only do this once.
+# keys.txt stays on your computer: it's never sent to the browser and is ignored by git.
+# Keep it private, like a password.
+
+# PokemonPriceTracker (real PSA prices for graded cards): pokemonpricetracker.com
+PPT_API_KEY=
+
+# Scrydex (optional, paid card data source)
+SCRYDEX_API_KEY=
+SCRYDEX_TEAM_ID=

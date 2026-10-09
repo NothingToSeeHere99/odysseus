@@ -131,6 +131,15 @@ If you host the game somewhere else, enter the server's address under **Server U
 
 Each Scrydex request costs 1 credit, and a set takes 1–3 requests. Card data is cached in the browser for 24 hours, so a normal day of play costs a few dozen credits.
 
+### Running the bundled server (easy way)
+
+1. Install [Node.js](https://nodejs.org) (LTS).
+2. Double-click **`start-windows.bat`** (Windows) or **`start-mac.command`** (Mac; the first time, right-click it and choose **Open**). On Linux, run `sh start-mac.command`.
+3. The first run creates **`keys.txt`** and opens it. Paste your keys after the `=` signs, save, and double-click the launcher again.
+4. The game opens at http://localhost:8787. Keep the launcher window open while you play.
+
+`keys.txt` is read every time the server starts, so you set your keys once. It stays on your computer, is never sent to the browser, and is ignored by git. Environment variables still work and override it.
+
 ### Real graded prices
 
 [PokemonPriceTracker](https://www.pokemonpricetracker.com) has real PSA sale prices from eBay, by grade. Its free plan (100 credits a day) is enough for this game. Its API doesn't accept requests made straight from a web page, so the key goes on a small relay that adds it for you. Pick one:

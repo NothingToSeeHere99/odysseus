@@ -5,15 +5,42 @@
 //   /ppt/*      → PokemonPriceTracker (graded PSA prices), adding PPT_API_KEY
 // No dependencies: needs Node 18+.
 //
-//   SCRYDEX_API_KEY=... SCRYDEX_TEAM_ID=... node server/proxy.js
+// Keys can go in keys.txt next to index.html (one NAME=value per line, see
+// keys.example.txt) or in environment variables, which win over the file:
 //
-// Without Scrydex credentials it still serves the game and proxies TCGdex.
+//   SCRYDEX_API_KEY=... SCRYDEX_TEAM_ID=... PPT_API_KEY=... node server/proxy.js
+//
+// Without any keys it still serves the game and proxies TCGdex.
 'use strict';
 const http = require('http');
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+
+const KEYS_FILE = process.env.KEYS_FILE || path.join(__dirname, '..', 'keys.txt');
+const KEY_NAMES = ['PPT_API_KEY', 'SCRYDEX_API_KEY', 'SCRYDEX_TEAM_ID'];
+
+// NAME=value lines; blank lines, # comments, quotes and unknown names are ignored.
+function loadKeys(file) {
+  let text;
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch {
+    return [];
+  }
+  const loaded = [];
+  for (const line of text.replace(/^\uFEFF/, '').split(/\r?\n/)) {
+    const m = /^\s*([A-Z_]+)\s*=\s*(.*?)\s*$/.exec(line);
+    if (!m || !KEY_NAMES.includes(m[1])) continue;
+    const value = m[2].replace(/^(['"])(.*)\1$/, '$2');
+    if (!value || /^your-|^paste/i.test(value)) continue;
+    if (!process.env[m[1]]) process.env[m[1]] = value;
+    loaded.push(m[1]);
+  }
+  return loaded;
+}
+const keysLoaded = loadKeys(KEYS_FILE);
 
 const PORT = Number(process.env.PORT) || 8787;
 const HOST = process.env.HOST || '127.0.0.1';
@@ -182,6 +209,7 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
+  if (keysLoaded.length) console.log(`Keys read from ${path.basename(KEYS_FILE)}: ${keysLoaded.join(', ')}`);
   console.log(`Pack Rush running at http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
   console.log(`Card data cache: ${CACHE_MS / 3600000}h in ${CACHE_DIR}`);
   console.log(PPT_KEY ? 'Graded prices (PokemonPriceTracker) enabled.' : 'Graded prices: set PPT_API_KEY for real PSA prices (optional).');

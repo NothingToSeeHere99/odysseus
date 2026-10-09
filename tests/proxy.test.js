@@ -18,7 +18,7 @@ async function get(url) {
 
 async function startProxy(env) {
   const port = 20000 + Math.floor(Math.random() * 20000);
-  const child = spawn(process.execPath, [path.join(__dirname, '..', 'server', 'proxy.js')], { env: { ...process.env, PORT: String(port), ...env }, stdio: 'pipe' });
+  const child = spawn(process.execPath, [path.join(__dirname, '..', 'server', 'proxy.js')], { env: { ...process.env, PORT: String(port), KEYS_FILE: path.join(os.tmpdir(), 'packrush-no-keys.txt'), ...env }, stdio: 'pipe' });
   for (let i = 0; i < 50; i++) {
     try {
       await get(`http://127.0.0.1:${port}/scrydex/health`);
@@ -140,4 +140,28 @@ test('proxy forwards graded price lookups to PokemonPriceTracker with the key, o
   assert.deepStrictEqual(hits, [{ url: '/api/v2/cards?search=Charizard&includeEbay=true', auth: 'Bearer pk' }]);
   assert.strictEqual((await get(`http://127.0.0.1:${port}/ppt/cards?search=Charizard&includeEbay=true`)).headers.get('x-cache'), 'hit');
   assert.strictEqual((await get(`http://127.0.0.1:${port}/ppt/sets`)).status, 400);
+});
+
+test('proxy reads keys from keys.txt; placeholders and comments are ignored, environment wins', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'packrush-keys-'));
+  const file = path.join(dir, 'keys.txt');
+  fs.writeFileSync(file, '﻿# comment\r\nPPT_API_KEY = "abc123"\r\nSCRYDEX_API_KEY=your-key\r\nSCRYDEX_TEAM_ID=\r\nOTHER=x\r\n');
+  const hits = [];
+  const upstream = http.createServer((req, res) => {
+    hits.push(req.headers.authorization);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end('{"data":[]}');
+  });
+  const upPort = await listen(upstream);
+  const { port, child } = await startProxy({ KEYS_FILE: file, PPT_UPSTREAM: `http://127.0.0.1:${upPort}/api/v2`, CACHE_DIR: path.join(dir, 'cache') });
+  t.after(() => {
+    child.kill();
+    upstream.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  const health = JSON.parse((await get(`http://127.0.0.1:${port}/scrydex/health`)).text);
+  assert.strictEqual(health.ppt, true);
+  assert.strictEqual(health.configured, false, 'placeholder Scrydex key ignored');
+  await get(`http://127.0.0.1:${port}/ppt/cards?search=A`);
+  assert.deepStrictEqual(hits, ['Bearer abc123']);
 });
