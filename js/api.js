@@ -833,6 +833,7 @@
 
   async function pptTarget() {
     const s = settings();
+    if (s.pptProxy) return { base: s.pptProxy.trim().replace(/\/+$/, '').replace(/\/cards$/, ''), headers: {}, via: 'relay' };
     const proxy = await detectProxy();
     if (proxy && proxy.ppt) return { base: new URL('ppt', location.href).href, headers: {}, via: 'proxy' };
     if (s.pptKey) return { base: PPT_BASE, headers: { Authorization: 'Bearer ' + s.pptKey }, via: 'direct' };
@@ -924,7 +925,7 @@
       const g = pptGrades(Array.isArray(json.data) ? json.data[0] : json.data);
       return { ok: true, note: g[10] ? `PSA 10 Base Set Charizard: $${g[10].toLocaleString()}` : 'Connected' };
     } catch (e) {
-      return { ok: false, error: e instanceof TypeError ? 'Blocked by the browser. Use the bundled server instead.' : e.message || String(e) };
+      return { ok: false, error: e instanceof TypeError ? (settings().pptProxy ? 'Couldn’t reach the server URL. Check it and that the worker is deployed.' : 'PokemonPriceTracker doesn’t accept requests straight from a web page. Set up the free relay (see Graded prices) or run the bundled server.') : e.message || String(e) };
     }
   }
 

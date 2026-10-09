@@ -133,18 +133,20 @@ Each Scrydex request costs 1 credit, and a set takes 1–3 requests. Card data i
 
 ### Real graded prices
 
-[PokemonPriceTracker](https://www.pokemonpricetracker.com) has real PSA sale prices from eBay, by grade. Its free plan (100 credits a day) is enough for this game:
+[PokemonPriceTracker](https://www.pokemonpricetracker.com) has real PSA sale prices from eBay, by grade. Its free plan (100 credits a day) is enough for this game. Its API doesn't accept requests made straight from a web page, so the key goes on a small relay that adds it for you. Pick one:
+
+**A free Cloudflare Worker** (works with the downloaded file, including on a phone):
 
 1. Sign up at pokemonpricetracker.com and copy your API key.
-2. Either paste it into **Profile → Card data → Graded prices**, or start the bundled server with it so it stays off the browser:
+2. In the [Cloudflare dashboard](https://dash.cloudflare.com) (free account): **Workers & Pages → Create → Create Worker**. Name it (e.g. `pack-rush-prices`), press **Deploy**, then **Edit code**. Replace the code with [`worker/ppt-proxy.mjs`](worker/ppt-proxy.mjs) and press **Deploy** again.
+3. In the worker's **Settings → Variables and Secrets**, add a **Secret** named `PPT_API_KEY` with your key.
+4. Copy the worker's address (like `https://pack-rush-prices.you.workers.dev`) into **Profile → Card data → Graded prices → Relay URL**, press Save, then **Test connections**. It should show a PSA 10 price for a Base Set Charizard.
 
-   ```sh
-   PPT_API_KEY=your-key npm start
-   ```
+The worker only forwards card price lookups, keeps the key out of the browser, and caches answers for 12 hours.
 
-3. Press **Test connections**. It should show a PSA 10 price for a Base Set Charizard.
+**Or the bundled server:** start it with `PPT_API_KEY=your-key npm start` and open the game from it; it's found automatically.
 
-The game only looks up cards you open the Grade screen for, cards at the grader and slabs you own. It keeps each result for a week (a day if there were no sales), so a typical day uses a handful of lookups at about 2 credits each. If the key runs out of credits, the game falls back to estimates and tries again later. If the browser blocks direct requests to the API, use the server.
+The game only looks up cards you open the Grade screen for, cards at the grader and slabs you own. It keeps each result for a week (a day if there were no sales), so a typical day uses a handful of lookups at about 2 credits each. If the key runs out of credits, the game falls back to estimates and tries again later.
 
 ## Development
 

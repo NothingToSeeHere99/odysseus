@@ -1031,6 +1031,7 @@
     const sxKey = input(s.scrydexKey, { type: 'password', placeholder: 'Scrydex API key' });
     const sxTeam = input(s.scrydexTeam, { placeholder: 'Scrydex team ID' });
     const pptKey = input(s.pptKey, { type: 'password', placeholder: 'PokemonPriceTracker API key' });
+    const pptProxy = input(s.pptProxy, { placeholder: 'https://pack-rush-prices.you.workers.dev' });
     const statusEl = h('div', { class: 'source-status' }, 'Checking…');
     const cacheInfo = h('p', { class: 'muted small cache-info' });
     const refreshCacheInfo = async () => {
@@ -1054,7 +1055,7 @@
         h('div', null, h('span', null, 'Loading cards from'), h('b', null, using)),
         h('div', null, h('span', null, 'TCGdex'), h('b', { class: 'good' }, st.tcgdexViaProxy ? 'ready, cached by the Pack Rush server' : 'ready (free, no key)')),
         h('div', null, h('span', null, 'Scrydex'), h('b', { class: st.scrydex ? 'good' : '' }, sx)),
-        h('div', null, h('span', null, 'Graded prices'), h('b', { class: st.graded ? 'good' : '' }, st.graded === 'proxy' ? 'PokemonPriceTracker through the Pack Rush server' : st.graded === 'direct' ? 'PokemonPriceTracker, key in this browser' : 'estimated (add a PokemonPriceTracker key for real PSA prices)'))
+        h('div', null, h('span', null, 'Graded prices'), h('b', { class: st.graded ? 'good' : '' }, st.graded === 'relay' ? 'PokemonPriceTracker through your relay' : st.graded === 'proxy' ? 'PokemonPriceTracker through the Pack Rush server' : st.graded === 'direct' ? 'PokemonPriceTracker, key in this browser' : 'estimated (add a PokemonPriceTracker key for real PSA prices)'))
       );
     };
     refreshStatus();
@@ -1068,6 +1069,7 @@
         scrydexKey: sxKey.value.trim(),
         scrydexTeam: sxTeam.value.trim(),
         pptKey: pptKey.value.trim(),
+        pptProxy: pptProxy.value.trim(),
       });
       modelCache.clear();
       toast('Card data settings saved', 'good');
@@ -1134,8 +1136,10 @@
             field('Team ID', sxTeam)
           ),
           h('h4', null, 'Graded prices · PokemonPriceTracker'),
-          h('p', { class: 'muted small' }, 'Real PSA sale prices from eBay for cards you grade. The free plan at pokemonpricetracker.com (100 credits a day) is plenty: only graded cards are looked up, and each result is kept for a week. Without a key, graded values are estimates.'),
-          field('API key', pptKey)
+          h('p', { class: 'muted small' }, 'Real PSA sale prices from eBay for cards you grade. The free plan at pokemonpricetracker.com (100 credits a day) is plenty: only graded cards are looked up, and each result is kept for a week. Without it, graded values are estimates.'),
+          h('p', { class: 'muted small' }, 'PokemonPriceTracker doesn’t accept requests straight from a web page, so the key lives on a small relay: a free Cloudflare Worker (worker/ppt-proxy.mjs, steps in the README) or the bundled server started with PPT_API_KEY, which the game finds by itself.'),
+          field('Relay URL (Cloudflare Worker)', pptProxy),
+          h('details', { class: 'adv' }, h('summary', null, 'Or try the key directly in this browser'), h('p', { class: 'muted small' }, 'Usually blocked by PokemonPriceTracker. Kept in case they allow it later.'), field('API key', pptKey))
         )
       ),
       tests,

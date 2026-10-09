@@ -395,3 +395,12 @@ test('graded prices: out of credits stops further lookups for a while', async ()
   assert.strictEqual(await PP.api.gradedPrices({ id: 'a-2', s: 'a', n: 'B', no: '2' }), null);
   assert.strictEqual(n, after, 'no more requests');
 });
+
+test('graded prices go through the relay URL when one is set, without the key', async () => {
+  const calls = [];
+  const PP = load({ fetch: async (url, init) => (calls.push({ url, auth: init.headers.Authorization }), ok({ data: [] })) });
+  PP.api.saveSettings({ pptKey: 'k', pptProxy: 'https://relay.example.workers.dev/' });
+  await PP.api.gradedPrices({ id: 'a-1', s: 'a', n: 'A', no: '1' });
+  assert.ok(calls[0].url.startsWith('https://relay.example.workers.dev/cards?'));
+  assert.strictEqual(calls[0].auth, undefined);
+});
