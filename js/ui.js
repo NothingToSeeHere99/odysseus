@@ -1030,6 +1030,7 @@
     const sxProxy = input(s.scrydexProxy, { placeholder: 'http://localhost:8787/scrydex' });
     const sxKey = input(s.scrydexKey, { type: 'password', placeholder: 'Scrydex API key' });
     const sxTeam = input(s.scrydexTeam, { placeholder: 'Scrydex team ID' });
+    const pptKey = input(s.pptKey, { type: 'password', placeholder: 'PokemonPriceTracker API key' });
     const statusEl = h('div', { class: 'source-status' }, 'Checking…');
     const cacheInfo = h('p', { class: 'muted small cache-info' });
     const refreshCacheInfo = async () => {
@@ -1052,7 +1053,8 @@
       statusEl.replaceChildren(
         h('div', null, h('span', null, 'Loading cards from'), h('b', null, using)),
         h('div', null, h('span', null, 'TCGdex'), h('b', { class: 'good' }, st.tcgdexViaProxy ? 'ready, cached by the Pack Rush server' : 'ready (free, no key)')),
-        h('div', null, h('span', null, 'Scrydex'), h('b', { class: st.scrydex ? 'good' : '' }, sx))
+        h('div', null, h('span', null, 'Scrydex'), h('b', { class: st.scrydex ? 'good' : '' }, sx)),
+        h('div', null, h('span', null, 'Graded prices'), h('b', { class: st.graded ? 'good' : '' }, st.graded === 'proxy' ? 'PokemonPriceTracker through the Pack Rush server' : st.graded === 'direct' ? 'PokemonPriceTracker, key in this browser' : 'estimated (add a PokemonPriceTracker key for real PSA prices)'))
       );
     };
     refreshStatus();
@@ -1065,6 +1067,7 @@
         scrydexProxy: sxProxy.value.trim(),
         scrydexKey: sxKey.value.trim(),
         scrydexTeam: sxTeam.value.trim(),
+        pptKey: pptKey.value.trim(),
       });
       modelCache.clear();
       toast('Card data settings saved', 'good');
@@ -1077,10 +1080,11 @@
       save();
       tests.replaceChildren(loading('Testing connections…'));
       const r = await API.testSources();
+      r.graded = await API.testGraded();
       b.disabled = false;
       tests.replaceChildren(
         ...Object.entries(r).map(([name, res]) =>
-          h('div', { class: 'source-test ' + (res.ok ? 'is-ok' : 'is-bad') }, h('b', null, API.SOURCE_LABEL[name]), h('span', null, res.ok ? 'Working' : res.error))
+          h('div', { class: 'source-test ' + (res.ok ? 'is-ok' : 'is-bad') }, h('b', null, API.SOURCE_LABEL[name] || 'PokemonPriceTracker'), h('span', null, res.ok ? res.note || 'Working' : res.error))
         )
       );
     };
@@ -1128,7 +1132,10 @@
             h('p', { class: 'muted small' }, 'The key is saved in this browser and sent from it. Scrydex advises against putting keys in web pages, and its API may refuse requests made straight from a browser. The server is the reliable option.'),
             field('API key', sxKey),
             field('Team ID', sxTeam)
-          )
+          ),
+          h('h4', null, 'Graded prices · PokemonPriceTracker'),
+          h('p', { class: 'muted small' }, 'Real PSA sale prices from eBay for cards you grade. The free plan at pokemonpricetracker.com (100 credits a day) is plenty: only graded cards are looked up, and each result is kept for a week. Without a key, graded values are estimates.'),
+          field('API key', pptKey)
         )
       ),
       tests,
@@ -1530,6 +1537,16 @@
     }
   }
 
+  // Real PSA prices for slabs and cards at the grader (cached for a week, so mostly free).
+  async function refreshGraded() {
+    for (const id of G.slabIds()) {
+      const m = G.state.meta[id];
+      if (!m) continue;
+      const pg = await API.gradedPrices(m);
+      if (pg && Object.keys(pg).length) G.setGraded(id, pg);
+    }
+  }
+
   // ---- boot --------------------------------------------------------------
 
   function boot() {
@@ -1557,7 +1574,7 @@
     tick();
     setInterval(tick, 1000);
     render();
-    setTimeout(() => refreshPrices(), 4000);
+    setTimeout(() => refreshPrices().then(refreshGraded), 4000);
   }
 
   Object.assign(ui, { toast, render, showCard, closeModal, openModal });

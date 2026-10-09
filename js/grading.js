@@ -47,8 +47,14 @@
   }
 
   // "Send for grading": odds, estimated value per grade, fee and turnaround.
-  function gradeDialog(entry, onDone) {
-    const meta = entry.meta;
+  function gradeDialog(entry, onDone, looked) {
+    const meta = G.state.meta[entry.id] || entry.meta;
+    // Look up real PSA prices once, then redraw with them if anything changed.
+    if (!looked && PP.api.gradedPrices) {
+      PP.api.gradedPrices(meta).then((pg) => {
+        if (pg && Object.keys(pg).length && G.setGraded(meta.id, pg) && document.querySelector('.grade-dialog')) gradeDialog({ ...entry, meta: G.state.meta[meta.id] }, onDone, true);
+      });
+    }
     const era = eraOf(meta);
     const odds = E.gradeOdds(meta, entry.v, era);
     const ev = E.gradedEV(meta, entry.v, era);
@@ -107,7 +113,7 @@
             'p',
             { class: 'muted small' },
             'The card leaves your collection until it comes back in a slab. ',
-            meta.g ? 'Values use real PSA sale prices where available.' : 'Values are estimates of how much more real graded cards sell for than raw ones.',
+            meta.g || meta.pg ? `Values use real PSA sale prices${meta.pg && !meta.g ? ' from eBay (via PokemonPriceTracker)' : ''} where available.` : 'Values are estimates of how much more real graded cards sell for than raw ones.',
             ' Vintage cards rarely get a 10, but the ones that do are worth far more.'
           ),
           h('div', { class: 'row wrap grade-dialog__buy' }, speedBtn('standard', 'btn--buy'), speedBtn('express', 'btn--primary'))

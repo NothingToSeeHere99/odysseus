@@ -2,6 +2,7 @@
 // Serves Pack Rush and forwards card data requests, caching responses on disk:
 //   /scrydex/*  → Scrydex API, adding your credentials so the key never reaches the browser
 //   /tcgdex/*   → TCGdex API (free, no key), so its per-card price lookups are cached too
+//   /ppt/*      → PokemonPriceTracker (graded PSA prices), adding PPT_API_KEY
 // No dependencies: needs Node 18+.
 //
 //   SCRYDEX_API_KEY=... SCRYDEX_TEAM_ID=... node server/proxy.js
@@ -19,6 +20,8 @@ const HOST = process.env.HOST || '127.0.0.1';
 const KEY = process.env.SCRYDEX_API_KEY || '';
 const TEAM = process.env.SCRYDEX_TEAM_ID || '';
 const SCRYDEX = (process.env.SCRYDEX_UPSTREAM || 'https://api.scrydex.com/pokemon/v1').replace(/\/+$/, '');
+const PPT_KEY = process.env.PPT_API_KEY || '';
+const PPT = (process.env.PPT_UPSTREAM || 'https://www.pokemonpricetracker.com/api/v2').replace(/\/+$/, '');
 const TCGDEX = (process.env.TCGDEX_UPSTREAM || 'https://api.tcgdex.net/v2').replace(/\/+$/, '');
 const CACHE_DIR = process.env.CACHE_DIR || path.join(__dirname, '.cache');
 const CACHE_MS = (Number(process.env.CACHE_HOURS) || 12) * 3600 * 1000;
@@ -43,7 +46,7 @@ const CORS = {
 };
 const JSON_HEADERS = { ...CORS, 'Content-Type': MIME['.json'] };
 
-const upstreamCalls = { scrydex: 0, tcgdex: 0 };
+const upstreamCalls = { scrydex: 0, tcgdex: 0, ppt: 0 };
 
 function send(res, status, body, headers = {}) {
   res.writeHead(status, { 'Cache-Control': 'no-store', ...headers });
@@ -122,11 +125,19 @@ const safePath = (rest) => /^\/[\w\-./]*$/.test(rest) && !rest.includes('..');
 
 async function handleScrydex(req, res, url) {
   const rest = url.pathname.slice('/scrydex'.length);
-  if (rest === '/health') return sendJson(res, 200, { ok: true, configured, tcgdex: true, upstreamCalls: upstreamCalls.scrydex + upstreamCalls.tcgdex, calls: upstreamCalls });
+  if (rest === '/health') return sendJson(res, 200, { ok: true, configured, tcgdex: true, ppt: !!PPT_KEY, upstreamCalls: upstreamCalls.scrydex + upstreamCalls.tcgdex + upstreamCalls.ppt, calls: upstreamCalls });
   if (req.method !== 'GET') return sendJson(res, 405, { error: 'Method not allowed' });
   if (!configured) return sendJson(res, 503, { error: 'Set SCRYDEX_API_KEY and SCRYDEX_TEAM_ID to enable Scrydex.' });
   if (!safePath(rest)) return sendJson(res, 400, { error: 'Bad path' });
   return forward(res, 'scrydex', SCRYDEX + rest + url.search, { headers: { 'X-Api-Key': KEY, 'X-Team-ID': TEAM } });
+}
+
+async function handlePpt(req, res, url) {
+  const rest = url.pathname.slice('/ppt'.length);
+  if (req.method !== 'GET') return sendJson(res, 405, { error: 'Method not allowed' });
+  if (!PPT_KEY) return sendJson(res, 503, { error: 'Set PPT_API_KEY to enable graded prices.' });
+  if (rest !== '/cards') return sendJson(res, 400, { error: 'Bad path' });
+  return forward(res, 'ppt', PPT + rest + url.search, { headers: { Authorization: 'Bearer ' + PPT_KEY } });
 }
 
 async function handleTcgdex(req, res, url) {
@@ -165,6 +176,7 @@ const server = http.createServer((req, res) => {
   if (req.method === 'OPTIONS') return send(res, 204, '', CORS);
   if (under(url.pathname, '/scrydex')) return handleScrydex(req, res, url);
   if (under(url.pathname, '/tcgdex')) return handleTcgdex(req, res, url);
+  if (under(url.pathname, '/ppt')) return handlePpt(req, res, url);
   if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, 'Method not allowed');
   return handleStatic(req, res, url);
 });
@@ -172,5 +184,6 @@ const server = http.createServer((req, res) => {
 server.listen(PORT, HOST, () => {
   console.log(`Pack Rush running at http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
   console.log(`Card data cache: ${CACHE_MS / 3600000}h in ${CACHE_DIR}`);
+  console.log(PPT_KEY ? 'Graded prices (PokemonPriceTracker) enabled.' : 'Graded prices: set PPT_API_KEY for real PSA prices (optional).');
   console.log(configured ? 'Scrydex enabled.' : 'Scrydex not configured (optional): set SCRYDEX_API_KEY and SCRYDEX_TEAM_ID to enable it.');
 });

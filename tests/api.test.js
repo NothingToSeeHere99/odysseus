@@ -347,3 +347,51 @@ test('cache: an empty set is retried after an hour, not kept for a week', async 
   assert.strictEqual((await PP.api.getSetCards('me6')).length, 1);
   assert.strictEqual(calls, 2);
 });
+
+test('graded prices: PSA sales by grade from PokemonPriceTracker, matched to the exact card and cached', async () => {
+  const calls = [];
+  const charizard = {
+    name: 'Charizard', cardNumber: '4/102', setName: 'Base Set',
+    ebay: { salesByGrade: { psa10: { count: 84, medianPrice: 30000, smartMarketPrice: { price: 29090.72, confidence: 'high' } }, psa9: { count: 12, medianPrice: 2675 }, psa8: { count: 0, medianPrice: 900 }, cgc9_5: { count: 3, medianPrice: 4000 } } },
+  };
+  const PP = load({
+    fetch: async (url, init) => {
+      const u = new URL(url);
+      calls.push({ path: u.pathname, q: Object.fromEntries(u.searchParams), auth: init.headers.Authorization });
+      return ok({ data: [{ ...charizard, cardNumber: '4/102', setName: 'Base Set 2' }, charizard] });
+    },
+  });
+  const A = PP.api;
+  const card = { id: 'base1-4', s: 'base1', n: 'Charizard', no: '4' };
+  assert.strictEqual(await A.gradedPrices(card), null, 'nothing without a key');
+  assert.strictEqual(calls.length, 0);
+
+  A.saveSettings({ pptKey: 'k123' });
+  const g = await A.gradedPrices(card);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(g)), { 10: 29090.72, 9: 2675 }, 'PSA only, sales required, smart price preferred');
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0].path, '/api/v2/cards');
+  assert.strictEqual(calls[0].auth, 'Bearer k123');
+  assert.strictEqual(calls[0].q.includeEbay, 'true');
+  assert.strictEqual(calls[0].q.search, 'Charizard');
+
+  await A.gradedPrices(card);
+  assert.strictEqual(calls.length, 1, 'cached');
+
+  // A TCGplayer id (from TCGdex) gives an exact lookup.
+  await A.gradedPrices({ id: 'base1-2', s: 'base1', n: 'Blastoise', no: '2', tpid: 42382 });
+  assert.strictEqual(calls[1].q.tcgPlayerId, '42382');
+
+  // No matching number: an empty result, not someone else's prices.
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(await A.gradedPrices({ id: 'base1-9', s: 'base1', n: 'Charizard', no: '9' }))), {});
+});
+
+test('graded prices: out of credits stops further lookups for a while', async () => {
+  let n = 0;
+  const PP = load({ fetch: async () => (n++, fail(429)) });
+  PP.api.saveSettings({ pptKey: 'k' });
+  assert.strictEqual(await PP.api.gradedPrices({ id: 'a-1', s: 'a', n: 'A', no: '1' }), null);
+  const after = n;
+  assert.strictEqual(await PP.api.gradedPrices({ id: 'a-2', s: 'a', n: 'B', no: '2' }), null);
+  assert.strictEqual(n, after, 'no more requests');
+});

@@ -372,12 +372,25 @@
     return Number(U.pickWeighted(rng, Object.entries(GRADE_ODDS[era] || GRADE_ODDS.modern).map(([g, w]) => [g, w])));
   }
 
-  // Real graded sale prices (from Scrydex, when available) win over the estimate.
+  // Real graded sale prices (Scrydex, then PokemonPriceTracker) win over the estimate.
+  // Grades without sales are scaled from the nearest grade that has them, so the ladder
+  // stays consistent; with no sales at all, they're the raw price times the grade multiplier.
+  function realGraded(card) {
+    const out = {};
+    for (const src of [card.pg, card.g]) if (src) for (const [k, v] of Object.entries(src)) if (v > 0) out[k] = v;
+    return out;
+  }
+
   function gradedPrice(card, variant, grade, era) {
-    const real = card.g && card.g[grade];
-    if (real) return U.round2(real);
-    const mult = (GRADE_MULT[era] || GRADE_MULT.modern)[grade];
-    return U.round2(Math.max(SLAB_FLOOR[grade], priceOf(card, variant) * mult));
+    const mults = GRADE_MULT[era] || GRADE_MULT.modern;
+    const real = realGraded(card);
+    if (real[grade]) return U.round2(real[grade]);
+    const known = Object.keys(real).map(Number);
+    if (known.length) {
+      const near = known.sort((a, b) => Math.abs(a - grade) - Math.abs(b - grade) || b - a)[0];
+      return U.round2(Math.max(SLAB_FLOOR[grade], (real[near] * mults[grade]) / mults[near]));
+    }
+    return U.round2(Math.max(SLAB_FLOOR[grade], priceOf(card, variant) * mults[grade]));
   }
 
   function gradeOdds(card, variant, era) {

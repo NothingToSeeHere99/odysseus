@@ -43,6 +43,10 @@ test('fees follow value tiers; express costs 3x; slabs have a value floor; real 
   assert.strictEqual(E.gradedPrice(chase, 'holofoil', 10, 'vintage'), 1200);
   assert.strictEqual(E.gradedPrice(chase, 'holofoil', 8, 'modern'), 85);
   assert.strictEqual(E.gradedPrice({ ...chase, g: { 10: 2500 } }, 'holofoil', 10, 'vintage'), 2500);
+  assert.strictEqual(E.gradedPrice({ ...chase, pg: { 10: 3100 } }, 'holofoil', 10, 'vintage'), 3100, 'PokemonPriceTracker PSA price');
+  assert.strictEqual(E.gradedPrice({ ...chase, g: { 10: 2500 }, pg: { 10: 3100 } }, 'holofoil', 10, 'vintage'), 2500, 'Scrydex first');
+  // Missing grades scale from the nearest real one: vintage 8 is 1.5/3 of a real $400 PSA 9.
+  assert.strictEqual(E.gradedPrice({ ...chase, pg: { 9: 400 } }, 'holofoil', 8, 'vintage'), 200);
   // Grading cheap cards loses money on average; grading good cards is a gamble that pays off on average.
   assert.ok(E.gradedEV(common, 'normal', 'modern') < E.gradingFee(0.1));
   assert.ok(E.gradedEV(chase, 'holofoil', 'modern') > 100 + E.gradingFee(100));

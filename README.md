@@ -46,7 +46,7 @@ Open any card in your collection and press **Grade** to send one copy to Pack Ru
 
 - **Fee** by the card's value, like real tiers: under $100 → $15, under $500 → $30, under $1,500 → $75, under $5,000 → $150, otherwise $300. **Standard** takes 1 hour; **Express** costs 3× and takes 5 minutes.
 - **Grades 1–10.** Odds depend on the card's age, modeled on real population reports: about 30% of modern cards (2017+) get a 10, about 12% of 2003–2016 cards, and about 3% of vintage (1999–2002). The grade is decided when you send the card, so reloading can't change it.
-- **Value** is the raw price × a multiplier for the grade (for example ×2.5 for a modern 10, ×12 for a vintage 10, about ×0.85 for an 8), with a small minimum because even a common in a slab has some value. If Scrydex supplies real PSA sale prices for that grade, those are used instead.
+- **Value** is the raw price × a multiplier for the grade (for example ×2.5 for a modern 10, ×12 for a vintage 10, about ×0.85 for an 8), with a small minimum because even a common in a slab has some value. Real PSA sale prices replace the estimate when available: from Scrydex, or from PokemonPriceTracker (see [Real graded prices](#real-graded-prices)). Grades with no recorded sales are scaled from the nearest grade that has them.
 - When it's back, the Collection tab shows a badge; reveal the grade from the **At the grader** panel.
 - Graded cards sit in slabs and are never touched by bulk selling. **Crack** a slab to get the raw card back, for example to try for a better grade.
 
@@ -130,6 +130,21 @@ The server (`server/proxy.js`, no dependencies):
 If you host the game somewhere else, enter the server's address under **Server URL**. You can also paste a key straight into the browser instead. Scrydex advises against that, and its API may refuse requests made directly from a web page.
 
 Each Scrydex request costs 1 credit, and a set takes 1–3 requests. Card data is cached in the browser for 24 hours, so a normal day of play costs a few dozen credits.
+
+### Real graded prices
+
+[PokemonPriceTracker](https://www.pokemonpricetracker.com) has real PSA sale prices from eBay, by grade. Its free plan (100 credits a day) is enough for this game:
+
+1. Sign up at pokemonpricetracker.com and copy your API key.
+2. Either paste it into **Profile → Card data → Graded prices**, or start the bundled server with it so it stays off the browser:
+
+   ```sh
+   PPT_API_KEY=your-key npm start
+   ```
+
+3. Press **Test connections**. It should show a PSA 10 price for a Base Set Charizard.
+
+The game only looks up cards you open the Grade screen for, cards at the grader and slabs you own. It keeps each result for a week (a day if there were no sales), so a typical day uses a handful of lookups at about 2 credits each. If the key runs out of credits, the game falls back to estimates and tries again later. If the browser blocks direct requests to the API, use the server.
 
 ## Development
 

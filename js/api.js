@@ -128,6 +128,7 @@
     if (c.cm) out.cm = c.cm;
     if (c.cmr) out.cmr = c.cmr;
     if (c.g) out.g = c.g;
+    if (c.tpid) out.tpid = c.tpid;
     return out;
   };
 
@@ -538,6 +539,7 @@
         if (!v || typeof v !== 'object') continue;
         const price = v.marketPrice ?? v.midPrice ?? v.lowPrice;
         if (price > 0) p[variantKey(k)] = U.round2(price);
+        if (v.productId && !out.tpid) out.tpid = v.productId; // TCGplayer's id, for graded price lookups
       }
     }
     const cm = pricing && pricing.cardmarket;
@@ -816,6 +818,116 @@
     }
   }
 
+  // ---- graded prices: PokemonPriceTracker ----------------------------------
+  //
+  // Real PSA sale prices (from eBay) by grade. Only looked up for cards being graded or
+  // already in a slab, and kept for a week, because the free plan allows 100 credits a
+  // day (about 2 per lookup). Reached through the bundled server (key kept there) or
+  // straight from the browser with a key saved on the Profile tab.
+
+  const PPT_BASE = 'https://www.pokemonpricetracker.com/api/v2';
+  const GRADED_TTL = 7 * DAY;
+  const GRADED_MISS_TTL = DAY;
+  const gradedPending = new Map();
+  let pptBlockedUntil = 0;
+
+  async function pptTarget() {
+    const s = settings();
+    const proxy = await detectProxy();
+    if (proxy && proxy.ppt) return { base: new URL('ppt', location.href).href, headers: {}, via: 'proxy' };
+    if (s.pptKey) return { base: PPT_BASE, headers: { Authorization: 'Bearer ' + s.pptKey }, via: 'direct' };
+    return null;
+  }
+
+  async function pptRequest(params, opts) {
+    const t = await pptTarget();
+    if (!t) throw new Error('Not set up');
+    return fetchJson(withParams(t.base + '/cards', params), t.headers, { retries: 1, timeout: 20000, ...opts });
+  }
+
+  const num = (x) => (typeof x === 'number' ? x : x && typeof x === 'object' ? x.price ?? x.value ?? null : Number(x) || null);
+
+  // { 10: price, 9: price, ... } from one result's eBay sales by grade (PSA only).
+  function pptGrades(card) {
+    const by = card && card.ebay && (card.ebay.salesByGrade || card.ebay.grades);
+    const out = {};
+    if (!by) return out;
+    for (const [key, v] of Object.entries(by)) {
+      const m = /^psa[\s_-]?(\d+)$/i.exec(key);
+      if (!m || !v) continue;
+      const grade = Number(m[1]);
+      if (grade < 1 || grade > 10 || (v.count != null && v.count < 1)) continue;
+      const price = num(v.smartMarketPrice) ?? num(v.medianPrice) ?? num(v.averagePrice) ?? num(v.price);
+      if (price > 0) out[grade] = U.round2(price);
+    }
+    return out;
+  }
+
+  const digits = (x) => String(x || '').split('/')[0].replace(/^0+/, '').toLowerCase();
+  const loose = (x) => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+  // The result that is this exact card: same number, and the same set when the result names one.
+  function pptMatch(results, card, setName) {
+    const list = Array.isArray(results) ? results : results ? [results] : [];
+    const sameNo = list.filter((r) => digits(r.cardNumber ?? r.number) === digits(card.no));
+    const sameSet = sameNo.filter((r) => {
+      const name = loose(r.setName || (r.set && r.set.name) || '');
+      return !name || !setName || name.includes(loose(setName)) || loose(setName).includes(name);
+    });
+    return sameSet[0] || (list.length === 1 && card.tpid ? list[0] : null);
+  }
+
+  async function lookupGraded(card) {
+    if (card.tpid) {
+      const json = await pptRequest({ tcgPlayerId: card.tpid, includeEbay: 'true', limit: 1 });
+      const hit = pptMatch(json.data, card, null) || (Array.isArray(json.data) ? json.data[0] : json.data);
+      if (hit) return pptGrades(hit);
+    }
+    const set = (memSets || []).find((x) => x.id === (card.s || card.id.slice(0, card.id.lastIndexOf('-'))));
+    const params = { search: card.n, includeEbay: 'true', limit: 5 };
+    if (set) params.setName = set.name;
+    const json = await pptRequest(params);
+    const hit = pptMatch(json.data, card, set && set.name);
+    return hit ? pptGrades(hit) : {};
+  }
+
+  // Resolves { grade: price } (possibly empty), or null when no lookup could be made.
+  async function gradedPrices(card, { force = false } = {}) {
+    if (!card || !card.id) return null;
+    await init();
+    const key = 'graded:' + card.id;
+    const hit = await store.get(key);
+    const now = Date.now();
+    if (hit && !force && now - hit.t < (Object.keys(hit.g).length ? GRADED_TTL : GRADED_MISS_TTL)) return hit.g;
+    if (now < pptBlockedUntil || !(await pptTarget())) return hit ? hit.g : null;
+    if (!gradedPending.has(card.id)) {
+      const p = lookupGraded(card)
+        .then(async (g) => {
+          await store.set(key, { g, t: Date.now() });
+          return g;
+        })
+        .catch((e) => {
+          // Out of credits, bad key or blocked: stop asking for a while.
+          if (e.status === 401 || e.status === 403 || e.status === 429 || e instanceof TypeError) pptBlockedUntil = Date.now() + (e.status === 429 ? 6 : 1) * PP.HOUR;
+          return hit ? hit.g : null;
+        })
+        .finally(() => gradedPending.delete(card.id));
+      gradedPending.set(card.id, p);
+    }
+    return gradedPending.get(card.id);
+  }
+
+  async function testGraded() {
+    if (!(await pptTarget())) return { ok: false, error: 'Not set up' };
+    try {
+      const json = await pptRequest({ search: 'Charizard', setName: 'Base Set', includeEbay: 'true', limit: 1 }, { retries: 0 });
+      const g = pptGrades(Array.isArray(json.data) ? json.data[0] : json.data);
+      return { ok: true, note: g[10] ? `PSA 10 Base Set Charizard: $${g[10].toLocaleString()}` : 'Connected' };
+    } catch (e) {
+      return { ok: false, error: e instanceof TypeError ? 'Blocked by the browser. Use the bundled server instead.' : e.message || String(e) };
+    }
+  }
+
   function peekSets() {
     return memSets;
   }
@@ -859,7 +971,8 @@
   async function status() {
     const t = await scrydexTarget();
     const proxy = await detectProxy();
-    return { mode: settings().source || 'auto', scrydex: t ? t.via : null, tcgdexViaProxy: !!(proxy && proxy.tcgdex), lastSource, down: [...down], sunset: LEGACY_SUNSET };
+    const g = await pptTarget();
+    return { mode: settings().source || 'auto', graded: g ? g.via : null, scrydex: t ? t.via : null, tcgdexViaProxy: !!(proxy && proxy.tcgdex), lastSource, down: [...down], sunset: LEGACY_SUNSET };
   }
 
   PP.api = {
@@ -876,6 +989,10 @@
     onPrices,
     cacheStats,
     altImage,
+    gradedPrices,
+    testGraded,
+    pptGrades,
+    pptMatch,
     clearCache,
     testSources,
     status,

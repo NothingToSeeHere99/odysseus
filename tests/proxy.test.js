@@ -117,3 +117,27 @@ test('proxy forwards TCGdex (GraphQL POST and REST GET) without credentials, and
   assert.strictEqual((await fetch(`http://127.0.0.1:${port}/tcgdex/en/cards`, { method: 'POST', body: '{}' })).status, 405);
   assert.strictEqual((await fetch(`http://127.0.0.1:${port}/scrydex/en/expansions`, { method: 'POST', body: '{}' })).status, 405);
 });
+
+test('proxy forwards graded price lookups to PokemonPriceTracker with the key, only /cards', async (t) => {
+  const hits = [];
+  const upstream = http.createServer((req, res) => {
+    hits.push({ url: req.url, auth: req.headers.authorization });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ data: [] }));
+  });
+  const upPort = await listen(upstream);
+  const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'packrush-cache-'));
+  const { port, child } = await startProxy({ PPT_API_KEY: 'pk', PPT_UPSTREAM: `http://127.0.0.1:${upPort}/api/v2`, CACHE_DIR: cacheDir });
+  t.after(() => {
+    child.kill();
+    upstream.close();
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+  });
+  const health = JSON.parse((await get(`http://127.0.0.1:${port}/scrydex/health`)).text);
+  assert.strictEqual(health.ppt, true);
+  const a = await get(`http://127.0.0.1:${port}/ppt/cards?search=Charizard&includeEbay=true`);
+  assert.strictEqual(a.status, 200);
+  assert.deepStrictEqual(hits, [{ url: '/api/v2/cards?search=Charizard&includeEbay=true', auth: 'Bearer pk' }]);
+  assert.strictEqual((await get(`http://127.0.0.1:${port}/ppt/cards?search=Charizard&includeEbay=true`)).headers.get('x-cache'), 'hit');
+  assert.strictEqual((await get(`http://127.0.0.1:${port}/ppt/sets`)).status, 400);
+});

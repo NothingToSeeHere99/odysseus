@@ -454,6 +454,24 @@
     }
   }
 
+  // Real PSA prices by grade from PokemonPriceTracker, kept apart from the main source's data.
+  function setGraded(id, pg) {
+    const m = state.meta[id];
+    if (!m || !pg || JSON.stringify(m.pg || {}) === JSON.stringify(pg)) return false;
+    m.pg = pg;
+    save();
+    emit();
+    return true;
+  }
+
+  // Cards whose graded value matters: slabs and cards at the grader.
+  function slabIds() {
+    const ids = new Set();
+    for (const e of Object.values(state.cards)) if (e.g) ids.add(e.id);
+    for (const j of state.grading || []) ids.add(j.id);
+    return [...ids];
+  }
+
   function staleIds(maxAge) {
     const now = Date.now();
     return Object.values(state.meta)
@@ -521,6 +539,8 @@
     cheapItems,
     itemsValue,
     updateMeta,
+    setGraded,
+    slabIds,
     staleIds,
     exportSave,
     importSave,
