@@ -26,7 +26,7 @@ test('grade odds sum to 1 and vintage rarely gets a 10', () => {
   const rng = PP.util.mulberry32(7);
   let tens = 0;
   for (let i = 0; i < 20000; i++) if (E.rollGrade('vintage', rng) === 10) tens++;
-  assert.ok(Math.abs(tens / 20000 - 0.03) < 0.006, `vintage 10 rate ${tens / 20000}`);
+  assert.ok(Math.abs(tens / 20000 - 0.02) < 0.005, `vintage 10 rate ${tens / 20000}`);
   assert.strictEqual(E.gradeEra('1999/01/09'), 'vintage');
   assert.strictEqual(E.gradeEra('2010-05-01'), 'classic');
   assert.strictEqual(E.gradeEra('2025/03/28'), 'modern');
@@ -40,16 +40,23 @@ test('fees follow value tiers; express costs 3x; slabs have a value floor; real 
   const common = { r: 'Common', p: { normal: 0.1 } };
   assert.strictEqual(E.gradedPrice(common, 'normal', 10, 'modern'), 18);
   const chase = { r: 'Rare Holo', p: { holofoil: 100 } };
-  assert.strictEqual(E.gradedPrice(chase, 'holofoil', 10, 'vintage'), 1200);
+  assert.strictEqual(E.gradedPrice(chase, 'holofoil', 10, 'vintage'), 1500);
   assert.strictEqual(E.gradedPrice(chase, 'holofoil', 8, 'modern'), 85);
   assert.strictEqual(E.gradedPrice({ ...chase, g: { 10: 2500 } }, 'holofoil', 10, 'vintage'), 2500);
   assert.strictEqual(E.gradedPrice({ ...chase, pg: { 10: 3100 } }, 'holofoil', 10, 'vintage'), 3100, 'PokemonPriceTracker PSA price');
   assert.strictEqual(E.gradedPrice({ ...chase, g: { 10: 2500 }, pg: { 10: 3100 } }, 'holofoil', 10, 'vintage'), 2500, 'Scrydex first');
-  // Missing grades scale from the nearest real one: vintage 8 is 1.5/3 of a real $400 PSA 9.
-  assert.strictEqual(E.gradedPrice({ ...chase, pg: { 9: 400 } }, 'holofoil', 8, 'vintage'), 200);
+  // Missing grades scale from the nearest real one: vintage 8 is 1.5/3.5 of a real $350 PSA 9.
+  assert.strictEqual(E.gradedPrice({ ...chase, pg: { 9: 350 } }, 'holofoil', 8, 'vintage'), 150);
   // Grading cheap cards loses money on average; grading good cards is a gamble that pays off on average.
   assert.ok(E.gradedEV(common, 'normal', 'modern') < E.gradingFee(0.1));
-  assert.ok(E.gradedEV(chase, 'holofoil', 'modern') > 100 + E.gradingFee(100));
+  const pricey = { r: 'Rare Holo', p: { holofoil: 400 } };
+  assert.ok(E.gradedEV(pricey, 'holofoil', 'modern') > 400 + E.gradingFee(400));
+  // Grades are spread out: 9s and 10s are the minority, low grades happen.
+  for (const era of ['modern', 'classic', 'vintage']) {
+    const o = E.GRADE_ODDS[era];
+    assert.ok(o[9] + o[10] < 0.4, era);
+    assert.ok([1, 2, 3, 4, 5, 6].reduce((a, g) => a + o[g], 0) > 0.2, era);
+  }
 });
 
 test('send → wait → reveal → sell/crack flow, and slabs are protected from bulk selling', () => {
